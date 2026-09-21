@@ -1,4 +1,5 @@
 <p align="center"><img src="docs/assets/logo-card.svg" alt="lookover" height="112"></p>
+<p align="center"><a href="https://www.npmjs.com/package/@cmgmyr/lookover"><img src="https://img.shields.io/npm/v/%40cmgmyr%2Flookover?label=npm" alt="npm"></a> <a href="https://github.com/cmgmyr/lookover/actions/workflows/ci.yml"><img src="https://github.com/cmgmyr/lookover/actions/workflows/ci.yml/badge.svg" alt="CI"></a></p>
 
 # Lookover
 
