@@ -8,6 +8,8 @@ Agents file cards with exact steps. You try each one and answer with a verdict a
 
 Lookover runs on your machine next to the app under test. The server listens on loopback by default. A `--local` store belongs to one project. The all-projects inbox is a feature of the global store.
 
+![Lookover: an agent files a card, you answer on the page, the agent processes the verdict](docs/assets/demo.svg)
+
 ## What it looks like
 
 <p align="center"><img src="docs/assets/screenshots/project-desktop.png" alt="The Novelhood queue: an open card with numbered steps, the expected result, an attached screenshot, a feedback box, and Approved and Needs work buttons" width="720"></p>
