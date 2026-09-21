@@ -4,25 +4,45 @@
   "description": "A manual-testing queue for agent crews and one human tester.",
   "license": "MIT",
   "author": "Chris Gmyr",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cmgmyr/lookover.git"
+  },
+  "homepage": "https://github.com/cmgmyr/lookover#readme",
+  "bugs": {
+    "url": "https://github.com/cmgmyr/lookover/issues"
+  },
+  "keywords": [
+    "manual testing",
+    "qa",
+    "agent",
+    "claude-code",
+    "codex",
+    "feedback"
+  ],
   "type": "module",
   "bin": {
-    "lookover": "bin/lookover.ts"
+    "lookover": "dist/bin/lookover.js"
   },
   "files": [
-    "bin",
-    "src",
+    "dist",
     "skills",
-    "!src/**/*.test.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "test": "node --test 'src/**/*.test.ts'",
-    "ci:check": "npm run check && npm test"
+    "ci:check": "npm run check && npm test",
+    "prepack": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
