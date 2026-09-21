@@ -1,0 +1,31 @@
+{
+  "name": "@cmgmyr/lookover",
+  "version": "0.1.0",
+  "description": "A manual-testing queue for agent crews and one human tester.",
+  "license": "MIT",
+  "author": "Chris Gmyr",
+  "type": "module",
+  "bin": {
+    "lookover": "bin/lookover.ts"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "!src/**/*.test.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test 'src/**/*.test.ts'",
+    "ci:check": "npm run check && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2"
+  }
+}

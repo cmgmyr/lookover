@@ -1,0 +1,5 @@
+node_modules/
+.agents/worktrees/
+.lookover/
+.DS_Store
+/hive.yml
