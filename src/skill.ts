@@ -9,7 +9,13 @@ import { CliError } from './session.ts';
 export type SkillInstallTarget = 'agents' | 'claude' | 'project';
 
 export function skillSourceDir(): string {
-  return resolve(fileURLToPath(new URL('../skills/lookover/', import.meta.url)));
+  let directory = dirname(fileURLToPath(import.meta.url));
+  while (!existsSync(join(directory, 'package.json'))) {
+    const parent = dirname(directory);
+    if (parent === directory) throw new Error('could not find package root');
+    directory = parent;
+  }
+  return resolve(directory, 'skills', 'lookover');
 }
 
 export function installTarget(

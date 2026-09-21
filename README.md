@@ -8,7 +8,7 @@ Lookover runs on your machine next to the app under test. The server listens on 
 
 ## Install
 
-You need Node 22.18 or newer. The package ships TypeScript source and runs it directly; Node 22.18 is the first release that does that without a flag. Lookover has zero native dependencies and no runtime dependency install beyond Node itself.
+You need Node 22.18 or newer. The package ships plain JavaScript; Node 22.18 provides the built-in sqlite support and runs the repo's TypeScript tests directly. Lookover has zero native dependencies and no runtime dependency install beyond Node itself.
 
 Install it globally for daily use:
 
