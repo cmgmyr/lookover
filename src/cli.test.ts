@@ -993,13 +993,9 @@ test('serve replaces a previous lookover serve and removes its pid file', async 
   await available.close();
   const first = await serveLine(box, available.port);
   const second = await serveLine(box, available.port);
-  t.after(async () => {
-    if (second.lookover.exitCode === null) {
-      second.lookover.kill('SIGTERM');
-      await new Promise<void>((resolve) => second.lookover.once('close', () => resolve()));
-    }
-  });
   assert.match(second.line, new RegExp(`replaced lookover serve \\(pid ${first.lookover.pid}\\) on port ${available.port}`));
+  second.lookover.kill('SIGTERM');
+  if (second.lookover.exitCode === null) await new Promise<void>((resolve) => second.lookover.once('close', () => resolve()));
   first.lookover.kill('SIGTERM');
   if (first.lookover.exitCode === null) await new Promise<void>((resolve) => first.lookover.once('close', () => resolve()));
 });
