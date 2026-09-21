@@ -963,7 +963,7 @@ test('the small mark files in docs/assets are the shapes the page draws, with ba
 
 test('every logo SVG is self-contained: no text, fonts, links or stylesheet variables', () => {
   const dir = fileURLToPath(new URL('../docs/assets/', import.meta.url));
-  const names = readdirSync(dir).filter((name) => name.endsWith('.svg'));
+  const names = readdirSync(dir).filter((name) => name.startsWith('logo') && name.endsWith('.svg'));
 
   assert.deepEqual(names.sort(), ['logo-card.svg', 'logo-dark.svg', 'logo-mark-dark.svg', 'logo-mark-small-dark.svg', 'logo-mark-small.svg', 'logo-mark.svg', 'logo.svg']);
   for (const name of names) {
