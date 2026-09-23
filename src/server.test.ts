@@ -536,6 +536,25 @@ test('a root outside HOME keeps its absolute parent in the header', async (t) =>
   assert.match(await (await get(`${base}/p/app`)).text(), /<p class="sub">app · \/srv\/repos<\/p>/);
 });
 
+// /all's counterpart to a project page's place line: how many projects
+// there are to jump between, singular at one, omitted with none.
+test('/all shows how many projects there are, and omits the line when there are none', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  assert.match(await (await get(`${base}/all`)).text(), /<h1>All projects<\/h1><\/header>/);
+  assert.doesNotMatch(await (await get(`${base}/all`)).text(), /<p class="sub">/);
+
+  store.registerProject({ slug: 'one', name: 'One', identity: `${dir}/.one`, identity_kind: 'git', root: '/repos/one', accent: '#336699' });
+  assert.match(await (await get(`${base}/all`)).text(), /<h1>All projects<\/h1><p class="sub">1 project<\/p>/);
+
+  store.registerProject({ slug: 'two', name: 'Two', identity: `${dir}/.two`, identity_kind: 'git', root: '/repos/two', accent: '#336699' });
+  assert.match(await (await get(`${base}/all`)).text(), /<h1>All projects<\/h1><p class="sub">2 projects<\/p>/);
+});
+
 test('the favicon and the selected picker segment carry the project accent, theme by theme', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
   const store = openStore(join(dir, 'queue.sqlite'));
@@ -560,17 +579,21 @@ test('the favicon and the selected picker segment carry the project accent, them
   assert.match(html, new RegExp(`<a style="--bl:${light};[^"]*" class="tile selected" href="/p/app"><span class="t">App</span><span class="n" data-count-for="app">1</span></a>`));
 });
 
-// Five projects is one more than the row can hold, and the current one is
-// deliberately the least active, so a test that only counted tiles would pass
-// on a picker that dropped the project you are looking at.
-test('the picker shows All, the three busiest projects and the current one, and the select carries every project', async (t) => {
+// Four projects, one more than the row can hold. Dates fix recency into an
+// order (one oldest .. four newest) that disagrees with the open-count order
+// (one highest .. three lowest), so a picker that fell back to recency would
+// show a different set of tiles, not just a different order of the same set.
+test('tiles rank by open count, descending, with recency breaking a tie', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
   const store = openStore(join(dir, 'queue.sqlite'));
   const made: Record<string, number> = {};
-  for (const slug of ['one', 'two', 'three', 'four', 'quiet']) {
+  for (const slug of ['one', 'two', 'three', 'four']) {
     made[slug] = store.registerProject({ slug, name: slug, identity: `${dir}/.${slug}`, identity_kind: 'git', root: `/repos/${slug}`, accent: '#336699' }).id;
   }
-  for (const slug of ['one', 'two', 'three', 'four']) store.addItem({ projectId: made[slug] ?? 0, title: `card for ${slug}` });
+  const counts: Record<string, number> = { one: 3, two: 2, three: 1, four: 1 };
+  for (const [slug, n] of Object.entries(counts)) {
+    for (let i = 0; i < n; i += 1) store.addItem({ projectId: made[slug] ?? 0, title: `card ${i} for ${slug}` });
+  }
   // Every row is written in the same second, so activity has to be dated by
   // hand or the tiebreak decides and the test measures insertion order.
   const db = new DatabaseSync(join(dir, 'queue.sqlite'));
@@ -583,27 +606,60 @@ test('the picker shows All, the three busiest projects and the current one, and 
   const base = await listen(server);
   t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
   const tiles = (html: string): string[] => [...html.matchAll(/class="tile[^"]*" href="([^"]+)"/g)].map((match) => match[1] ?? '');
-  const options = (html: string): string[] => [...html.matchAll(/<option value="([^"]+)"/g)].map((match) => match[1] ?? '');
 
+  // one (3) > two (2) > four (1, newer) > three (1, older): three is excluded.
   const all = await (await get(`${base}/all`)).text();
-  assert.deepEqual(tiles(all), ['/all', '/p/four', '/p/three', '/p/two']);
+  assert.deepEqual(tiles(all), ['/all', '/p/one', '/p/two', '/p/four']);
 
-  const quiet = await (await get(`${base}/p/quiet`)).text();
-  assert.deepEqual(tiles(quiet), ['/all', '/p/four', '/p/three', '/p/two', '/p/quiet']);
-  assert.match(quiet, /<a style="[^"]*" class="tile selected" href="\/p\/quiet">/);
+  // three ranks 4th, so its own page replaces the last ranked slot (four)
+  // rather than adding a fifth tile: the row stays four tiles wide.
+  const excluded = await (await get(`${base}/p/three`)).text();
+  assert.deepEqual(tiles(excluded), ['/all', '/p/one', '/p/two', '/p/three']);
+  assert.match(excluded, /<a style="[^"]*" class="tile selected" href="\/p\/three">/);
 
-  const busy = await (await get(`${base}/p/four`)).text();
-  assert.deepEqual(tiles(busy), ['/all', '/p/four', '/p/three', '/p/two']);
-  assert.equal((busy.match(/class="tile selected"/g) ?? []).length, 1);
+  // four is already ranked in, so its own page adds nothing.
+  const included = await (await get(`${base}/p/four`)).text();
+  assert.deepEqual(tiles(included), ['/all', '/p/one', '/p/two', '/p/four']);
+  assert.equal((included.match(/class="tile selected"/g) ?? []).length, 1);
+});
 
-  // The tiles are ordered by activity; the select is alphabetical, because a
-  // list you scan for a name is easier to scan sorted by name. Every fixture
-  // here has name === slug, so the "by name" half is pinned by the test
-  // below, not by this line.
-  assert.deepEqual(options(quiet), ['all', 'four', 'one', 'quiet', 'three', 'two']);
-  assert.match(quiet, /<option value="quiet" selected>quiet<\/option>/);
-  assert.match(quiet, /<form class="jump" method="get" action="\/">/);
-  assert.match(quiet, /<button class="go" type="submit">Go<\/button>/);
+// Five projects, one busy and four quiet. Dates fix the quiet ones' recency
+// (a-newest .. d-oldest) since they tie at zero. Vacuous without all three
+// pages: a picker that always showed 4 tiles, or always the same 3 projects,
+// would pass any one of them alone.
+test('zero-open projects fill the remaining tile slots after the busiest, capped at a fixed row width', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  const busy = store.registerProject({ slug: 'busy', name: 'busy', identity: `${dir}/.busy`, identity_kind: 'git', root: '/repos/busy', accent: '#336699' });
+  const made: Record<string, number> = { busy: busy.id };
+  for (const slug of ['quiet-a', 'quiet-b', 'quiet-c', 'quiet-d']) {
+    made[slug] = store.registerProject({ slug, name: slug, identity: `${dir}/.${slug}`, identity_kind: 'git', root: `/repos/${slug}`, accent: '#336699' }).id;
+  }
+  for (let i = 0; i < 5; i += 1) store.addItem({ projectId: busy.id, title: `card ${i}` });
+  const db = new DatabaseSync(join(dir, 'queue.sqlite'));
+  for (const [year, slug] of [['2024', 'quiet-a'], ['2023', 'quiet-b'], ['2022', 'quiet-c'], ['2021', 'quiet-d']] as const) {
+    db.prepare("UPDATE projects SET created_at = ? WHERE id = ?").run(`${year}-01-01 00:00:00`, made[slug] ?? 0);
+  }
+  db.close();
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+  const tiles = (html: string): string[] => [...html.matchAll(/class="tile[^"]*" href="([^"]+)"/g)].map((match) => match[1] ?? '');
+
+  // busy (5) > quiet-a (0, newest) > quiet-b (0, next): quiet-c and quiet-d
+  // never reach a tile on any page below.
+  const all = await (await get(`${base}/all`)).text();
+  assert.deepEqual(tiles(all), ['/all', '/p/busy', '/p/quiet-a', '/p/quiet-b']);
+
+  // Already ranked in: its own page shows the same four tiles.
+  const top3 = await (await get(`${base}/p/busy`)).text();
+  assert.deepEqual(tiles(top3), ['/all', '/p/busy', '/p/quiet-a', '/p/quiet-b']);
+  assert.match(top3, /<a style="[^"]*" class="tile selected" href="\/p\/busy">/);
+
+  // Not ranked in: replaces the last slot (quiet-b), still four tiles.
+  const nonTop3 = await (await get(`${base}/p/quiet-c`)).text();
+  assert.deepEqual(tiles(nonTop3), ['/all', '/p/busy', '/p/quiet-a', '/p/quiet-c']);
+  assert.match(nonTop3, /<a style="[^"]*" class="tile selected" href="\/p\/quiet-c">/);
 });
 
 // Vacuous without the five-project half: a page that never rendered the
@@ -612,7 +668,8 @@ test('the select is left out when every project already has a tile', async (t) =
   const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
   const store = openStore(join(dir, 'queue.sqlite'));
   for (const slug of ['one', 'two']) {
-    store.registerProject({ slug, name: slug, identity: `${dir}/.${slug}`, identity_kind: 'git', root: `/repos/${slug}`, accent: '#336699' });
+    const project = store.registerProject({ slug, name: slug, identity: `${dir}/.${slug}`, identity_kind: 'git', root: `/repos/${slug}`, accent: '#336699' });
+    store.addItem({ projectId: project.id, title: `card for ${slug}` });
   }
   const server = createServer(store);
   const base = await listen(server);
@@ -622,6 +679,82 @@ test('the select is left out when every project already has a tile', async (t) =
 
   assert.equal((html.match(/class="tile[ "]/g) ?? []).length, 3);
   assert.doesNotMatch(html, /class="jump"/);
+});
+
+// The row is now fixed-width regardless of open counts, so the select's
+// presence tracks project count against TILE_COUNT, not who has anything
+// open: four quiet projects still leave one without a tile.
+test('the select still renders when there are more projects than tiles, even with nothing open anywhere', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  for (const slug of ['one', 'two', 'three', 'four']) {
+    store.registerProject({ slug, name: slug, identity: `${dir}/.${slug}`, identity_kind: 'git', root: `/repos/${slug}`, accent: '#336699' });
+  }
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  const html = await (await get(`${base}/all`)).text();
+
+  assert.equal((html.match(/class="tile[ "]/g) ?? []).length, 4);
+  assert.match(html, /class="jump"/);
+});
+
+// The select's own labels: a count in parens above zero, the bare name at
+// zero, and the data attributes the update script rebuilds a label from. A
+// fourth (delta) project keeps total projects above TILE_COUNT so the
+// select renders regardless of which three land a tile.
+test('select option labels carry the open count, and each option carries data-name and data-open-for', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  const alpha = store.registerProject({ slug: 'alpha', name: 'Alpha', identity: `${dir}/.alpha`, identity_kind: 'git', root: '/repos/alpha', accent: '#336699' });
+  const gamma = store.registerProject({ slug: 'gamma', name: 'Gamma', identity: `${dir}/.gamma`, identity_kind: 'git', root: '/repos/gamma', accent: '#336699' });
+  store.registerProject({ slug: 'beta', name: 'Beta', identity: `${dir}/.beta`, identity_kind: 'git', root: '/repos/beta', accent: '#336699' });
+  store.registerProject({ slug: 'delta', name: 'Delta', identity: `${dir}/.delta`, identity_kind: 'git', root: '/repos/delta', accent: '#336699' });
+  for (let i = 0; i < 5; i += 1) store.addItem({ projectId: alpha.id, title: `card ${i}` });
+  for (let i = 0; i < 2; i += 1) store.addItem({ projectId: gamma.id, title: `card ${i}` });
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  const html = await (await get(`${base}/all`)).text();
+
+  assert.match(html, /<option value="all" data-name="All projects" data-open-for="all" selected>All projects \(7\)<\/option>/);
+  assert.match(html, /<option value="alpha" data-name="Alpha" data-open-for="alpha">Alpha \(5\)<\/option>/);
+  assert.match(html, /<option value="beta" data-name="Beta" data-open-for="beta">Beta<\/option>/);
+  assert.match(html, /<option value="gamma" data-name="Gamma" data-open-for="gamma">Gamma \(2\)<\/option>/);
+  assert.match(html, /<option value="delta" data-name="Delta" data-open-for="delta">Delta<\/option>/);
+});
+
+// The tab title leads with the current view's own open count, not a global
+// total: an all-projects total on a quiet project's page would be false.
+test('the tab title leads with the view\'s open count, and drops the prefix at zero', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  const busy = store.registerProject({ slug: 'busy', name: 'Busy', identity: `${dir}/.busy`, identity_kind: 'git', root: '/repos/busy', accent: '#336699' });
+  store.registerProject({ slug: 'quiet', name: 'Quiet', identity: `${dir}/.quiet`, identity_kind: 'git', root: '/repos/quiet', accent: '#336699' });
+  for (let i = 0; i < 4; i += 1) store.addItem({ projectId: busy.id, title: `card ${i}` });
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  assert.match(await (await get(`${base}/p/busy`)).text(), /<title>\(4\) Busy · Lookover<\/title>/);
+  assert.match(await (await get(`${base}/p/quiet`)).text(), /<title>Quiet · Lookover<\/title>/);
+  assert.match(await (await get(`${base}/all`)).text(), /<title>\(4\) All projects · Lookover<\/title>/);
+});
+
+// The fourth combination the test above does not reach: /all with nothing
+// open on any project.
+test('the tab title is bare on /all when nothing is open anywhere', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  store.registerProject({ slug: 'one', name: 'One', identity: `${dir}/.one`, identity_kind: 'git', root: '/repos/one', accent: '#336699' });
+  store.registerProject({ slug: 'two', name: 'Two', identity: `${dir}/.two`, identity_kind: 'git', root: '/repos/two', accent: '#336699' });
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  assert.match(await (await get(`${base}/all`)).text(), /<title>All projects · Lookover<\/title>/);
 });
 
 // A slug never moves once registered, so `lookover init --name` on an existing
@@ -1324,16 +1457,19 @@ function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number
   const openHeading = { textContent: String(options.openCards ?? 0) };
   const feedbackHeading = { textContent: '0' };
   const tiles = [{ dataset: { countFor: 'all' }, textContent: '0' }, { dataset: { countFor: 'app' }, textContent: String(options.openCards ?? 0) }, { dataset: { countFor: 'other' }, textContent: '9' }];
+  const selectOptions = [{ dataset: { openFor: 'all', name: 'All projects' }, textContent: 'All projects' }, { dataset: { openFor: 'app', name: 'App' }, textContent: 'App' }, { dataset: { openFor: 'other', name: 'Other' }, textContent: 'Other (9)' }];
   let poll: (() => Promise<void>) | undefined;
   let submit: ((event: unknown) => Promise<void>) | undefined;
+  const documentStub = {
+    title: '',
+    querySelector: (selector: string) => selector === '[data-section="open"] .n' ? openHeading : selector === '[data-section="feedback"] .n' ? feedbackHeading : null,
+    querySelectorAll: (selector: string) => selector === '[data-count-for]' ? tiles : selector === '[data-open-for]' ? selectOptions : [],
+    getElementById: (name: string) => (name === 'new-count' ? line : toast),
+    addEventListener: (type: string, handler: (event: unknown) => Promise<void>) => { if (type === 'submit') submit = handler; },
+    createElement: () => ({ set innerHTML(_html: string) { fired.push('parsed'); }, content: { firstElementChild: next } }),
+  };
   const sandbox = {
-    document: {
-      querySelector: (selector: string) => selector === '[data-section="open"] .n' ? openHeading : selector === '[data-section="feedback"] .n' ? feedbackHeading : null,
-      querySelectorAll: (selector: string) => selector === '[data-count-for]' ? tiles : [],
-      getElementById: (name: string) => (name === 'new-count' ? line : toast),
-      addEventListener: (type: string, handler: (event: unknown) => Promise<void>) => { if (type === 'submit') submit = handler; },
-      createElement: () => ({ set innerHTML(_html: string) { fired.push('parsed'); }, content: { firstElementChild: next } }),
-    },
+    document: documentStub,
     HTMLFormElement: FakeForm,
     FormData: FakeFormData,
     TypeError,
@@ -1353,7 +1489,7 @@ function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number
   let prevented = false;
   const done = submit?.({ target: form, preventDefault: () => { prevented = true; }, submitter: options.submitter });
   const again = (): Promise<void> => submit?.({ target: form, preventDefault: () => undefined }) ?? Promise.resolve();
-  return { done: done ?? Promise.resolve(), again, line, anchor, poll: async (): Promise<void> => { await poll?.(); }, toast, calls, card, fired, prevented: () => prevented, next, tiles, openHeading, feedbackHeading };
+  return { done: done ?? Promise.resolve(), again, line, anchor, poll: async (): Promise<void> => { await poll?.(); }, toast, calls, card, fired, prevented: () => prevented, next, tiles, options: selectOptions, get title() { return documentStub.title; }, openHeading, feedbackHeading };
 }
 
 const savedReply = (verdict: string, open = 0, feedback = 0) => () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, item: { verdict, project: 'app' }, html: '<form class="card"></form>', counts: { project: { open, feedback, processed: 0 }, all: { open, feedback, processed: 0 } } }) });
@@ -1470,6 +1606,46 @@ test('answering a card already waiting, or filing a new one, does not change the
   open = 3;
   await filer.poll();
   assert.equal(filer.anchor.textContent, '1 new card, reload');
+});
+
+// Runs the poll's own setInterval callback, so a wrong branch or count
+// source in setTitle shows up as the wrong document.title, not as text
+// matched out of the script's source.
+test('the 30s poll sets the tab title from its own fetched count, and drops the prefix at zero', async () => {
+  let open = 3;
+  const run = runSubmit({ reply: savedReply('approved', 0, 0), serverOpen: () => open, submitter: { name: 'verdict', value: 'approved' } });
+  await run.done;
+  await run.poll();
+  assert.equal(run.title, '(3) All projects · Lookover');
+
+  open = 0;
+  await run.poll();
+  assert.equal(run.title, 'All projects · Lookover');
+});
+
+// counts.project and counts.all differ on purpose: pageScript renders the
+// all view, so a setTitle that read the wrong branch (the saved item's own
+// project instead of the current view) would show 9, not 4.
+test('a background save sets the tab title from the view\'s own count, not the saved item\'s project', async () => {
+  const reply = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, item: { verdict: 'approved', project: 'app' }, html: '<form class="card"></form>', counts: { project: { open: 9, feedback: 0, processed: 0 }, all: { open: 4, feedback: 0, processed: 0 } } }) });
+  const run = runSubmit({ reply, submitter: { name: 'verdict', value: 'approved' } });
+
+  await run.done;
+
+  assert.equal(run.title, '(4) All projects · Lookover');
+});
+
+test('a background save relabels the matching jump option with the saved count, bare at zero, and leaves the rest alone', async () => {
+  const some = runSubmit({ reply: savedReply('approved', 4, 2), submitter: { name: 'verdict', value: 'approved' } });
+  await some.done;
+  assert.equal(some.options[0]?.textContent, 'All projects (4)');
+  assert.equal(some.options[1]?.textContent, 'App (4)');
+  assert.equal(some.options[2]?.textContent, 'Other (9)');
+
+  const none = runSubmit({ reply: savedReply('approved', 0, 0), submitter: { name: 'verdict', value: 'approved' } });
+  await none.done;
+  assert.equal(none.options[0]?.textContent, 'All projects');
+  assert.equal(none.options[1]?.textContent, 'App');
 });
 
 test('every form keeps method, action and multipart encoding so the page works with no script, and the toast is a status region', async (t) => {
