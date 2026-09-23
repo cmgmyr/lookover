@@ -47,7 +47,7 @@ export function renderPage(view: PageView): string {
     ? '<section><p class="empty">No projects registered. Run <code>lookover init --name &lt;name&gt;</code> first.</p></section>'
     : `<section><details class="fold filer"><summary>Found something else?${CHEVRON}</summary><form class="card" method="post" enctype="multipart/form-data" action="/items/new${token}">${currentProject === undefined ? projectOptions : `<input type="hidden" name="project" value="${escapeHtml(currentProject?.slug ?? '')}">`}${tokenValue}${viewValue}<label for="new-title">Title</label><input id="new-title" name="title" required maxlength="200" placeholder="Short name for what you found"><label for="new-body">What you saw</label><textarea id="new-body" name="body" placeholder="Where you were, what happened, what you expected."></textarea>${photoInput('new-photo')}<button type="submit">Send to the agent</button></form></details></section>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtml(titleText)}</title>${favicon(accent)}<style>${themeVars(accent)}${STYLE}</style></head><body><main>
-<header>${wordmark()}<h1>${escapeHtml(title)}</h1>${currentProject === undefined ? '' : `<p class="sub">${escapeHtml(placeLine(currentProject.root))}</p>`}</header>
+<header>${wordmark()}<h1>${escapeHtml(title)}</h1>${currentProject === undefined ? projectsSubline(view) : `<p class="sub">${escapeHtml(placeLine(currentProject.root))}</p>`}</header>
 <nav aria-label="Projects" class="picker">${picker}</nav>
 <p id="new-count" class="new-count" hidden><a href=""></a></p>
 ${newSection}
@@ -134,15 +134,21 @@ function placeLine(root: string): string {
   return parent === '' || parent === name ? name : `${name} · ${parent}`;
 }
 
+/** /all's counterpart to a project page's placeLine: how many projects there are to jump between. */
+function projectsSubline(view: PageView): string {
+  const n = view.projects.length;
+  return n === 0 ? '' : `<p class="sub">${n} project${n === 1 ? '' : 's'}</p>`;
+}
+
 function shortenHome(path: string): string {
   const home = homedir();
   return home !== '' && (path === home || path.startsWith(`${home}${sep}`)) ? `~${path.slice(home.length)}` : path;
 }
 
 /**
- * Four tiles at most: All, then the three busiest projects, then the current
- * one if it is not already among them. A dozen registered projects used to
- * fill the row; the rest are in the select beside it.
+ * A fixed row: All plus exactly the three busiest projects (or fewer, if
+ * fewer than three are registered), on every page. A dozen registered
+ * projects used to fill the row; the rest are in the select beside it.
  */
 const TILE_COUNT = 3;
 
@@ -157,17 +163,19 @@ function allOpenCount(view: PageView): number {
 
 /**
  * Ranked by open count, busiest first; Array#sort is stable, so ties keep
- * view.byActivity's recency order. Projects with nothing open get no tile,
- * so a quiet store never spends a slot on a project with no work to show.
+ * view.byActivity's recency order. No filter: a project with nothing open
+ * still fills a slot once every busier project has one, so the tile count
+ * never changes page to page. If the current project is not among the
+ * three, it replaces the last slot rather than adding a fourth; a fixed
+ * count means the header never jumps.
  */
 function tileProjects(view: PageView): Project[] {
   const ranked = view.byActivity ?? view.projects;
-  const shown = [...ranked]
-    .sort((first, second) => openCount(view, second) - openCount(view, first))
-    .filter((project) => openCount(view, project) > 0)
-    .slice(0, TILE_COUNT);
+  const shown = [...ranked].sort((first, second) => openCount(view, second) - openCount(view, first)).slice(0, TILE_COUNT);
   const current = view.projects.find((project) => project.slug === view.current);
-  if (current !== undefined && !shown.some((project) => project.id === current.id)) shown.push(current);
+  if (current !== undefined && !shown.some((project) => project.id === current.id) && shown.length > 0) {
+    shown[shown.length - 1] = current;
+  }
   return shown;
 }
 
