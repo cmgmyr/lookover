@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.2.0 - 2026-09-23
+
+- Changed project tiles to rank by open count, with the row always showing All plus three projects and the current project taking the last tile.
+- Added open counts to the Go to project list and the browser tab title.
+- Added a project count under the All projects heading.
+- Changed the README to lead with screenshots and a terminal demo, and added npm and CI badges.
+
 ## 0.1.0 - 2026-09-21
 
 - Added a global and project-local store for manual-testing cards.
