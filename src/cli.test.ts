@@ -107,7 +107,7 @@ test('lookover --version prints the version with nothing on stderr', (t) => {
   const result = run(sandbox(t), ['--version']);
 
   assert.equal(result.status, 0);
-  assert.equal(result.stdout.trim(), '0.1.0');
+  assert.equal(result.stdout.trim(), '0.2.0');
   assert.equal(result.stderr, '');
 });
 
