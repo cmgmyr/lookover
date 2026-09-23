@@ -146,9 +146,10 @@ function shortenHome(path: string): string {
 }
 
 /**
- * A fixed row: All plus exactly the three busiest projects (or fewer, if
- * fewer than three are registered), on every page. A dozen registered
- * projects used to fill the row; the rest are in the select beside it.
+ * A fixed row: All plus three project tiles (or fewer, if fewer than three
+ * are registered), the current project taking the last slot when it is not
+ * among the busiest. A dozen registered projects used to fill the row; the
+ * rest are in the select beside it.
  */
 const TILE_COUNT = 3;
 
