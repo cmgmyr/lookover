@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.2.1 - 2026-09-23
+
+- Fixed `lookover --version` crashing when installed from npm.
+- Changed releases to publish to npm from GitHub Actions with provenance.
+
 ## 0.2.0 - 2026-09-23
 
 - Changed project tiles to rank by open count, with the row always showing All plus three projects and the current project taking the last tile.

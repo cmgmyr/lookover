@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,4 +34,8 @@ test('the packed tarball runs from node_modules', (t) => {
   const skillPath = execFileSync(bin, ['skill', 'path'], { cwd: consumer, encoding: 'utf8', env }).trim();
   assert.match(skillPath, /skills[\\/]lookover$/);
   assert.equal(existsSync(join(skillPath, 'SKILL.md')), true);
+
+  const pkg = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as { version: string };
+  const version = execFileSync(bin, ['--version'], { cwd: consumer, encoding: 'utf8', env }).trim();
+  assert.equal(version, pkg.version);
 });
