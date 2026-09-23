@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { runAdd } from './commands/add.ts';
 import { runFeedback } from './commands/feedback.ts';
@@ -10,6 +11,7 @@ import { runProcess } from './commands/process.ts';
 import { runProject } from './commands/project.ts';
 import { runSkill } from './commands/skill.ts';
 import { runServe } from './commands/serve.ts';
+import { packageRoot } from './skill.ts';
 
 const USAGE = `lookover - a manual-testing queue for agent crews and one human tester.
 
@@ -119,6 +121,6 @@ function describe(error: unknown): string {
 }
 
 function version(): string {
-  const pkg = readFileSync(new URL('../package.json', import.meta.url), 'utf8');
+  const pkg = readFileSync(join(packageRoot(), 'package.json'), 'utf8');
   return (JSON.parse(pkg) as { version: string }).version;
 }

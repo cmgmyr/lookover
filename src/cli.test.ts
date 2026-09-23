@@ -105,9 +105,10 @@ test('an inherited object property is not treated as a command', (t) => {
 
 test('lookover --version prints the version with nothing on stderr', (t) => {
   const result = run(sandbox(t), ['--version']);
+  const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as { version: string };
 
   assert.equal(result.status, 0);
-  assert.equal(result.stdout.trim(), '0.2.0');
+  assert.equal(result.stdout.trim(), pkg.version);
   assert.equal(result.stderr, '');
 });
 

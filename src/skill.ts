@@ -8,14 +8,18 @@ import { CliError } from './session.ts';
 
 export type SkillInstallTarget = 'agents' | 'claude' | 'project';
 
-export function skillSourceDir(): string {
+export function packageRoot(): string {
   let directory = dirname(fileURLToPath(import.meta.url));
   while (!existsSync(join(directory, 'package.json'))) {
     const parent = dirname(directory);
     if (parent === directory) throw new Error('could not find package root');
     directory = parent;
   }
-  return resolve(directory, 'skills', 'lookover');
+  return directory;
+}
+
+export function skillSourceDir(): string {
+  return resolve(packageRoot(), 'skills', 'lookover');
 }
 
 export function installTarget(
