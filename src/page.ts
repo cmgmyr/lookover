@@ -30,8 +30,11 @@ export function renderPage(view: PageView): string {
   const token = tokenQuery(view);
   const tokenValue = tokenField(view);
   const viewValue = viewField(view);
+  const allOpen = allOpenCount(view);
   const shownTiles = tileProjects(view);
-  const picker = tiles(view, shownTiles, token) + jump(view, shownTiles, token);
+  const picker = tiles(view, shownTiles, token, allOpen) + jump(view, shownTiles, token, allOpen);
+  const baseTitleText = `${title} · Lookover`;
+  const titleText = view.open.length > 0 ? `(${view.open.length}) ${baseTitleText}` : baseTitleText;
 
   const projectOptions = currentProject === undefined && view.projects.length > 1
     ? `<label for="new-project">Project</label><select id="new-project" name="project">${byName(view.projects).map((project) => `<option value="${escapeHtml(project.slug)}">${escapeHtml(project.name)}</option>`).join('')}</select>`
@@ -43,7 +46,7 @@ export function renderPage(view: PageView): string {
   const newSection = view.projects.length === 0
     ? '<section><p class="empty">No projects registered. Run <code>lookover init --name &lt;name&gt;</code> first.</p></section>'
     : `<section><details class="fold filer"><summary>Found something else?${CHEVRON}</summary><form class="card" method="post" enctype="multipart/form-data" action="/items/new${token}">${currentProject === undefined ? projectOptions : `<input type="hidden" name="project" value="${escapeHtml(currentProject?.slug ?? '')}">`}${tokenValue}${viewValue}<label for="new-title">Title</label><input id="new-title" name="title" required maxlength="200" placeholder="Short name for what you found"><label for="new-body">What you saw</label><textarea id="new-body" name="body" placeholder="Where you were, what happened, what you expected."></textarea>${photoInput('new-photo')}<button type="submit">Send to the agent</button></form></details></section>`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtml(title)} · Lookover</title>${favicon(accent)}<style>${themeVars(accent)}${STYLE}</style></head><body><main>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtml(titleText)}</title>${favicon(accent)}<style>${themeVars(accent)}${STYLE}</style></head><body><main>
 <header>${wordmark()}<h1>${escapeHtml(title)}</h1>${currentProject === undefined ? '' : `<p class="sub">${escapeHtml(placeLine(currentProject.root))}</p>`}</header>
 <nav aria-label="Projects" class="picker">${picker}</nav>
 <p id="new-count" class="new-count" hidden><a href=""></a></p>
@@ -51,7 +54,7 @@ ${newSection}
 <section><h2 data-section="open">Awaiting your test<span class="n">${view.open.length}</span></h2>${view.open.length === 0 ? `<p class="empty">${doneMark()}Nothing to test. A real and good state.</p>` : grouped(view, view.open).map((item) => renderCard(view, item, false)).join('')}</section>
 <section><h2 data-section="feedback">Waiting for the agent<span class="n">${view.waiting.length}</span></h2>${view.waiting.length === 0 ? '<p class="none">Nothing saved yet.</p>' : grouped(view, view.waiting).map((item) => renderCard(view, item, true)).join('')}</section>
 <section><h2>Processed<span class="n">${view.done.length}</span></h2>${view.done.length === 0 ? '<p class="none">Nothing processed yet.</p>' : `<details class="fold history"><summary>Show history${CHEVRON}</summary>${grouped(view, view.done).map((item) => `<div class="done" id="item-${item.id}"><strong>${escapeHtml(item.title)}</strong> <span class="badge ${escapeHtml(item.verdict ?? 'note')}">${escapeHtml(verdictLabel(item.verdict))}</span><div class="meta">${escapeHtml(item.processed_at ?? '')}${item.processed_note ? ` · ${escapeHtml(item.processed_note)}` : ''}</div></div>`).join('')}</details>`}</section>
-</main><div id="toast" class="toast" role="status"></div>${pollScript(projectQuery, pollToken, view.open.length)}</body></html>`;
+</main><div id="toast" class="toast" role="status"></div>${pollScript(projectQuery, pollToken, view.open.length, baseTitleText)}</body></html>`;
 }
 
 function tokenQuery(view: CardView): string {
@@ -143,23 +146,38 @@ function shortenHome(path: string): string {
  */
 const TILE_COUNT = 3;
 
+function openCount(view: PageView, project: Project): number {
+  return view.counts.get(project.id)?.open ?? 0;
+}
+
+/** The same total the All tile and the select's "All projects" option show. */
+function allOpenCount(view: PageView): number {
+  return view.projects.reduce((sum, project) => sum + openCount(view, project), 0);
+}
+
+/**
+ * Ranked by open count, busiest first; Array#sort is stable, so ties keep
+ * view.byActivity's recency order. Projects with nothing open get no tile,
+ * so a quiet store never spends a slot on a project with no work to show.
+ */
 function tileProjects(view: PageView): Project[] {
   const ranked = view.byActivity ?? view.projects;
-  const shown = ranked.slice(0, TILE_COUNT);
+  const shown = [...ranked]
+    .sort((first, second) => openCount(view, second) - openCount(view, first))
+    .filter((project) => openCount(view, project) > 0)
+    .slice(0, TILE_COUNT);
   const current = view.projects.find((project) => project.slug === view.current);
   if (current !== undefined && !shown.some((project) => project.id === current.id)) shown.push(current);
   return shown;
 }
 
-function tiles(view: PageView, shown: Project[], token: string): string {
-  const total = view.projects.reduce((sum, project) => sum + (view.counts.get(project.id)?.open ?? 0), 0);
-
-  const all = `<a class="tile all${view.current === 'all' ? ' selected' : ''}" href="/all${token}"><span class="t">All</span><span class="n" data-count-for="all">${total}</span></a>`;
+function tiles(view: PageView, shown: Project[], token: string, allOpen: number): string {
+  const all = `<a class="tile all${view.current === 'all' ? ' selected' : ''}" href="/all${token}"><span class="t">All</span><span class="n" data-count-for="all">${allOpen}</span></a>`;
   return `<div class="tiles">${all}${shown.map((project) => tile(project, view, token)).join('')}</div>`;
 }
 
 function tile(project: Project, view: PageView, token: string): string {
-  const open = view.counts.get(project.id)?.open ?? 0;
+  const open = openCount(view, project);
   const selected = view.current === project.slug;
   return `<a style="${accentVars(safeAccent(project.accent))}" class="tile${selected ? ' selected' : ''}" href="/p/${encodeURIComponent(project.slug)}${token}"><span class="t">${escapeHtml(project.name)}</span><span class="n" data-count-for="${escapeHtml(project.slug)}">${open}</span></a>`;
 }
@@ -173,13 +191,14 @@ function tile(project: Project, view: PageView, token: string): string {
  * a select that can only repeat what is one tap above it is a row of chrome
  * saying nothing. Most stores have two or three projects and never see it.
  */
-function jump(view: PageView, shown: Project[], token: string): string {
+function jump(view: PageView, shown: Project[], token: string, allOpen: number): string {
   if (view.projects.length === 0) return '';
   if (view.projects.every((project) => shown.some((tiled) => tiled.id === project.id))) return '';
-  const option = (value: string, label: string): string =>
-    `<option value="${escapeHtml(value)}"${value === view.current ? ' selected' : ''}>${escapeHtml(label)}</option>`;
-  const options = [option('all', 'All projects')]
-    .concat(byName(view.projects).map((project) => option(project.slug, project.name))).join('');
+  const label = (name: string, open: number): string => open > 0 ? `${name} (${open})` : name;
+  const option = (value: string, name: string, open: number, openFor: string): string =>
+    `<option value="${escapeHtml(value)}" data-name="${escapeHtml(name)}" data-open-for="${escapeHtml(openFor)}"${value === view.current ? ' selected' : ''}>${escapeHtml(label(name, open))}</option>`;
+  const options = [option('all', 'All projects', allOpen, 'all')]
+    .concat(byName(view.projects).map((project) => option(project.slug, project.name, openCount(view, project), project.slug))).join('');
   const tokenField = view.token === undefined ? '' : `<input type="hidden" name="t" value="${escapeHtml(view.token)}">`;
   return `<form class="jump" method="get" action="/"><label for="jump-project">Go to project</label><select id="jump-project" name="project">${options}</select>${tokenField}<button class="go" type="submit">Go</button></form>`;
 }
@@ -290,13 +309,18 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character);
 }
 
+/** A JS string literal safe inside an inline <script>: a project name could contain "</script>". */
+function scriptString(value: string): string {
+  return JSON.stringify(value).replace(/</g, '\\u003C');
+}
+
 export function newCardsLine(delta: number): string | undefined {
   if (delta <= 0) return undefined;
   return `${delta} new card${delta === 1 ? '' : 's'}, reload`;
 }
 
-function pollScript(project: string, token: string, initialOpen: number): string {
-  return `<script>(()=>{const f=document.querySelector('.jump');if(!f)return;const g=f.querySelector('.go');g.hidden=true;f.querySelector('select').addEventListener('change',()=>f.submit())})();let initial=${initialOpen};setInterval(async()=>{try{const r=await fetch('/api/counts?project=${project}${token}');if(!r.ok)return;const n=await r.json();const line=document.getElementById('new-count');const delta=n.open-initial;if(delta>0){line.querySelector('a').textContent=delta===1?'1 new card, reload':delta+' new cards, reload';line.hidden=false}else{line.hidden=true}}catch{}} ,30000);${SAVE_SCRIPT(project)}</script>`;
+function pollScript(project: string, token: string, initialOpen: number, baseTitle: string): string {
+  return `<script>(()=>{const f=document.querySelector('.jump');if(!f)return;const g=f.querySelector('.go');g.hidden=true;f.querySelector('select').addEventListener('change',()=>f.submit())})();let initial=${initialOpen};const baseTitle=${scriptString(baseTitle)};const setTitle=(n)=>{document.title=n>0?'('+n+') '+baseTitle:baseTitle};setInterval(async()=>{try{const r=await fetch('/api/counts?project=${project}${token}');if(!r.ok)return;const n=await r.json();setTitle(n.open);const line=document.getElementById('new-count');const delta=n.open-initial;if(delta>0){line.querySelector('a').textContent=delta===1?'1 new card, reload':delta+' new cards, reload';line.hidden=false}else{line.hidden=true}}catch{}} ,30000);${SAVE_SCRIPT(project)}</script>`;
 }
 
 /**
@@ -317,7 +341,7 @@ const attachFiles=(form,files)=>{const input=photoFor(form);if(!input||files.len
 document.addEventListener('change',(event)=>{const input=event.target;if(!(input instanceof HTMLInputElement)||!input.matches('.photo-input'))return;renderPicks(input.closest('form.card'))});
 document.addEventListener('paste',(event)=>{const target=event.target;const form=target instanceof Element?target.closest('form.card'):null;if(!form)return;const files=[...(event.clipboardData?.files??[])].filter((file)=>file.type.startsWith('image/'));if(files.length===0)return;event.preventDefault();attachFiles(form,files)});
 document.addEventListener('click',(event)=>{const target=event.target;if(!(target instanceof HTMLElement)||!target.matches('.pick-remove'))return;const form=target.closest('form.card'),input=form&&photoFor(form);if(!form||!input||typeof DataTransfer==='undefined')return;const index=Number(target.dataset.index);const transfer=new DataTransfer();[...input.files].forEach((file,position)=>{if(position!==index)transfer.items.add(file)});input.files=transfer.files;renderPicks(form)});
-const updateCounts=(counts,savedProject)=>{if(!counts)return;const set=(selector,value)=>{const el=document.querySelector(selector);if(el)el.textContent=String(value)};const tiles=document.querySelectorAll('[data-count-for]');for(const tile of tiles){const key=tile.dataset.countFor;const value=key==='all'?counts.all?.open:key===${JSON.stringify(project)}||key===savedProject?counts.project?.open:undefined;if(value!==undefined)tile.textContent=String(value)}const current=${JSON.stringify(project)}==='all'?counts.all:counts.project;set('[data-section="open"] .n',current?.open);set('[data-section="feedback"] .n',current?.feedback);initial=current?.open??initial};
+const updateCounts=(counts,savedProject)=>{if(!counts)return;const set=(selector,value)=>{const el=document.querySelector(selector);if(el)el.textContent=String(value)};const valueFor=(key)=>key==='all'?counts.all?.open:key===${JSON.stringify(project)}||key===savedProject?counts.project?.open:undefined;const tiles=document.querySelectorAll('[data-count-for]');for(const tile of tiles){const value=valueFor(tile.dataset.countFor);if(value!==undefined)tile.textContent=String(value)}const options=document.querySelectorAll('[data-open-for]');for(const opt of options){const value=valueFor(opt.dataset.openFor);if(value!==undefined)opt.textContent=value>0?opt.dataset.name+' ('+value+')':opt.dataset.name}const current=${JSON.stringify(project)}==='all'?counts.all:counts.project;set('[data-section="open"] .n',current?.open);set('[data-section="feedback"] .n',current?.feedback);initial=current?.open??initial;setTitle(initial)};
 document.addEventListener('submit',async(event)=>{
 const form=event.target;
 if(!(form instanceof HTMLFormElement)||!form.matches('form.card'))return;

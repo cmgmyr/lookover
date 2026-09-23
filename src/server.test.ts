@@ -560,17 +560,21 @@ test('the favicon and the selected picker segment carry the project accent, them
   assert.match(html, new RegExp(`<a style="--bl:${light};[^"]*" class="tile selected" href="/p/app"><span class="t">App</span><span class="n" data-count-for="app">1</span></a>`));
 });
 
-// Five projects is one more than the row can hold, and the current one is
-// deliberately the least active, so a test that only counted tiles would pass
-// on a picker that dropped the project you are looking at.
-test('the picker shows All, the three busiest projects and the current one, and the select carries every project', async (t) => {
+// Four projects, one more than the row can hold. Dates fix recency into an
+// order (one oldest .. four newest) that disagrees with the open-count order
+// (one highest .. three lowest), so a picker that fell back to recency would
+// show a different set of tiles, not just a different order of the same set.
+test('tiles rank by open count, descending, with recency breaking a tie', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
   const store = openStore(join(dir, 'queue.sqlite'));
   const made: Record<string, number> = {};
-  for (const slug of ['one', 'two', 'three', 'four', 'quiet']) {
+  for (const slug of ['one', 'two', 'three', 'four']) {
     made[slug] = store.registerProject({ slug, name: slug, identity: `${dir}/.${slug}`, identity_kind: 'git', root: `/repos/${slug}`, accent: '#336699' }).id;
   }
-  for (const slug of ['one', 'two', 'three', 'four']) store.addItem({ projectId: made[slug] ?? 0, title: `card for ${slug}` });
+  const counts: Record<string, number> = { one: 3, two: 2, three: 1, four: 1 };
+  for (const [slug, n] of Object.entries(counts)) {
+    for (let i = 0; i < n; i += 1) store.addItem({ projectId: made[slug] ?? 0, title: `card ${i} for ${slug}` });
+  }
   // Every row is written in the same second, so activity has to be dated by
   // hand or the tiebreak decides and the test measures insertion order.
   const db = new DatabaseSync(join(dir, 'queue.sqlite'));
@@ -583,32 +587,65 @@ test('the picker shows All, the three busiest projects and the current one, and 
   const base = await listen(server);
   t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
   const tiles = (html: string): string[] => [...html.matchAll(/class="tile[^"]*" href="([^"]+)"/g)].map((match) => match[1] ?? '');
-  const options = (html: string): string[] => [...html.matchAll(/<option value="([^"]+)"/g)].map((match) => match[1] ?? '');
+
+  // one (3) > two (2) > four (1, newer) > three (1, older): three is excluded.
+  const all = await (await get(`${base}/all`)).text();
+  assert.deepEqual(tiles(all), ['/all', '/p/one', '/p/two', '/p/four']);
+
+  // three ranks 4th, so its own page appends it past the three ranked tiles.
+  const excluded = await (await get(`${base}/p/three`)).text();
+  assert.deepEqual(tiles(excluded), ['/all', '/p/one', '/p/two', '/p/four', '/p/three']);
+  assert.match(excluded, /<a style="[^"]*" class="tile selected" href="\/p\/three">/);
+
+  // four is already ranked in, so its own page adds nothing.
+  const included = await (await get(`${base}/p/four`)).text();
+  assert.deepEqual(tiles(included), ['/all', '/p/one', '/p/two', '/p/four']);
+  assert.equal((included.match(/class="tile selected"/g) ?? []).length, 1);
+});
+
+// Vacuous without the paired case: a picker that always rendered (or always
+// hid) a project's tile would pass either half on its own.
+test('a project with no open items gets no tile on /all, but a selected one on its own page', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  const busy = store.registerProject({ slug: 'busy', name: 'busy', identity: `${dir}/.busy`, identity_kind: 'git', root: '/repos/busy', accent: '#336699' });
+  store.registerProject({ slug: 'quiet', name: 'quiet', identity: `${dir}/.quiet`, identity_kind: 'git', root: '/repos/quiet', accent: '#336699' });
+  store.addItem({ projectId: busy.id, title: 'card for busy' });
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+  const tiles = (html: string): string[] => [...html.matchAll(/class="tile[^"]*" href="([^"]+)"/g)].map((match) => match[1] ?? '');
 
   const all = await (await get(`${base}/all`)).text();
-  assert.deepEqual(tiles(all), ['/all', '/p/four', '/p/three', '/p/two']);
+  assert.deepEqual(tiles(all), ['/all', '/p/busy']);
 
   const quiet = await (await get(`${base}/p/quiet`)).text();
-  assert.deepEqual(tiles(quiet), ['/all', '/p/four', '/p/three', '/p/two', '/p/quiet']);
+  assert.deepEqual(tiles(quiet), ['/all', '/p/busy', '/p/quiet']);
   assert.match(quiet, /<a style="[^"]*" class="tile selected" href="\/p\/quiet">/);
-
-  const busy = await (await get(`${base}/p/four`)).text();
-  assert.deepEqual(tiles(busy), ['/all', '/p/four', '/p/three', '/p/two']);
-  assert.equal((busy.match(/class="tile selected"/g) ?? []).length, 1);
-
-  // The tiles are ordered by activity; the select is alphabetical, because a
-  // list you scan for a name is easier to scan sorted by name. Every fixture
-  // here has name === slug, so the "by name" half is pinned by the test
-  // below, not by this line.
-  assert.deepEqual(options(quiet), ['all', 'four', 'one', 'quiet', 'three', 'two']);
-  assert.match(quiet, /<option value="quiet" selected>quiet<\/option>/);
-  assert.match(quiet, /<form class="jump" method="get" action="\/">/);
-  assert.match(quiet, /<button class="go" type="submit">Go<\/button>/);
 });
 
 // Vacuous without the five-project half: a page that never rendered the
 // select at all would pass the two-project assertion on its own.
 test('the select is left out when every project already has a tile', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  for (const slug of ['one', 'two']) {
+    const project = store.registerProject({ slug, name: slug, identity: `${dir}/.${slug}`, identity_kind: 'git', root: `/repos/${slug}`, accent: '#336699' });
+    store.addItem({ projectId: project.id, title: `card for ${slug}` });
+  }
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  const html = await (await get(`${base}/all`)).text();
+
+  assert.equal((html.match(/class="tile[ "]/g) ?? []).length, 3);
+  assert.doesNotMatch(html, /class="jump"/);
+});
+
+// The reverse of the case above: with nothing open anywhere, no project has
+// a tile, so the select is the only way to reach one.
+test('the select still renders when no project has any open items', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
   const store = openStore(join(dir, 'queue.sqlite'));
   for (const slug of ['one', 'two']) {
@@ -620,8 +657,65 @@ test('the select is left out when every project already has a tile', async (t) =
 
   const html = await (await get(`${base}/all`)).text();
 
-  assert.equal((html.match(/class="tile[ "]/g) ?? []).length, 3);
-  assert.doesNotMatch(html, /class="jump"/);
+  assert.equal((html.match(/class="tile[ "]/g) ?? []).length, 1);
+  assert.match(html, /class="jump"/);
+});
+
+// The select's own labels: a count in parens above zero, the bare name at
+// zero, and the data attributes the update script rebuilds a label from.
+test('select option labels carry the open count, and each option carries data-name and data-open-for', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  const alpha = store.registerProject({ slug: 'alpha', name: 'Alpha', identity: `${dir}/.alpha`, identity_kind: 'git', root: '/repos/alpha', accent: '#336699' });
+  const gamma = store.registerProject({ slug: 'gamma', name: 'Gamma', identity: `${dir}/.gamma`, identity_kind: 'git', root: '/repos/gamma', accent: '#336699' });
+  store.registerProject({ slug: 'beta', name: 'Beta', identity: `${dir}/.beta`, identity_kind: 'git', root: '/repos/beta', accent: '#336699' });
+  for (let i = 0; i < 5; i += 1) store.addItem({ projectId: alpha.id, title: `card ${i}` });
+  for (let i = 0; i < 2; i += 1) store.addItem({ projectId: gamma.id, title: `card ${i}` });
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  const html = await (await get(`${base}/all`)).text();
+
+  assert.match(html, /<option value="all" data-name="All projects" data-open-for="all" selected>All projects \(7\)<\/option>/);
+  assert.match(html, /<option value="alpha" data-name="Alpha" data-open-for="alpha">Alpha \(5\)<\/option>/);
+  assert.match(html, /<option value="beta" data-name="Beta" data-open-for="beta">Beta<\/option>/);
+  assert.match(html, /<option value="gamma" data-name="Gamma" data-open-for="gamma">Gamma \(2\)<\/option>/);
+});
+
+// The tab title leads with the current view's own open count, not a global
+// total: an all-projects total on a quiet project's page would be false.
+test('the tab title leads with the view\'s open count, and drops the prefix at zero', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  const busy = store.registerProject({ slug: 'busy', name: 'Busy', identity: `${dir}/.busy`, identity_kind: 'git', root: '/repos/busy', accent: '#336699' });
+  store.registerProject({ slug: 'quiet', name: 'Quiet', identity: `${dir}/.quiet`, identity_kind: 'git', root: '/repos/quiet', accent: '#336699' });
+  for (let i = 0; i < 4; i += 1) store.addItem({ projectId: busy.id, title: `card ${i}` });
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  assert.match(await (await get(`${base}/p/busy`)).text(), /<title>\(4\) Busy · Lookover<\/title>/);
+  assert.match(await (await get(`${base}/p/quiet`)).text(), /<title>Quiet · Lookover<\/title>/);
+  assert.match(await (await get(`${base}/all`)).text(), /<title>\(4\) All projects · Lookover<\/title>/);
+});
+
+// String matches on the rendered scripts, the same style the Go-button test
+// above uses: both the 30s poll and the post-save update keep the title
+// current, off the same server-rendered base title.
+test('the poll and the save script both keep the tab title current', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
+  const store = openStore(join(dir, 'queue.sqlite'));
+  store.registerProject({ slug: 'app', name: 'App', identity: `${dir}/.git`, identity_kind: 'git', root: '/repos/app', accent: '#336699' });
+  const server = createServer(store);
+  const base = await listen(server);
+  t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  const html = await (await get(`${base}/p/app`)).text();
+
+  assert.ok(html.includes('const setTitle=(n)=>{document.title=n>0?\'(\'+n+\') \'+baseTitle:baseTitle}'));
+  assert.ok(html.includes('setTitle(n.open)'), 'the 30s poll should update the title on every tick');
+  assert.ok(html.includes('setTitle(initial)'), 'a saved card should update the title from the response counts');
 });
 
 // A slug never moves once registered, so `lookover init --name` on an existing
