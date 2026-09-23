@@ -700,22 +700,18 @@ test('the tab title leads with the view\'s open count, and drops the prefix at z
   assert.match(await (await get(`${base}/all`)).text(), /<title>\(4\) All projects · Lookover<\/title>/);
 });
 
-// String matches on the rendered scripts, the same style the Go-button test
-// above uses: both the 30s poll and the post-save update keep the title
-// current, off the same server-rendered base title.
-test('the poll and the save script both keep the tab title current', async (t) => {
+// The fourth combination the test above does not reach: /all with nothing
+// open on any project.
+test('the tab title is bare on /all when nothing is open anywhere', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
   const store = openStore(join(dir, 'queue.sqlite'));
-  store.registerProject({ slug: 'app', name: 'App', identity: `${dir}/.git`, identity_kind: 'git', root: '/repos/app', accent: '#336699' });
+  store.registerProject({ slug: 'one', name: 'One', identity: `${dir}/.one`, identity_kind: 'git', root: '/repos/one', accent: '#336699' });
+  store.registerProject({ slug: 'two', name: 'Two', identity: `${dir}/.two`, identity_kind: 'git', root: '/repos/two', accent: '#336699' });
   const server = createServer(store);
   const base = await listen(server);
   t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
 
-  const html = await (await get(`${base}/p/app`)).text();
-
-  assert.ok(html.includes('const setTitle=(n)=>{document.title=n>0?\'(\'+n+\') \'+baseTitle:baseTitle}'));
-  assert.ok(html.includes('setTitle(n.open)'), 'the 30s poll should update the title on every tick');
-  assert.ok(html.includes('setTitle(initial)'), 'a saved card should update the title from the response counts');
+  assert.match(await (await get(`${base}/all`)).text(), /<title>All projects · Lookover<\/title>/);
 });
 
 // A slug never moves once registered, so `lookover init --name` on an existing
@@ -1418,16 +1414,19 @@ function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number
   const openHeading = { textContent: String(options.openCards ?? 0) };
   const feedbackHeading = { textContent: '0' };
   const tiles = [{ dataset: { countFor: 'all' }, textContent: '0' }, { dataset: { countFor: 'app' }, textContent: String(options.openCards ?? 0) }, { dataset: { countFor: 'other' }, textContent: '9' }];
+  const selectOptions = [{ dataset: { openFor: 'all', name: 'All projects' }, textContent: 'All projects' }, { dataset: { openFor: 'app', name: 'App' }, textContent: 'App' }, { dataset: { openFor: 'other', name: 'Other' }, textContent: 'Other (9)' }];
   let poll: (() => Promise<void>) | undefined;
   let submit: ((event: unknown) => Promise<void>) | undefined;
+  const documentStub = {
+    title: '',
+    querySelector: (selector: string) => selector === '[data-section="open"] .n' ? openHeading : selector === '[data-section="feedback"] .n' ? feedbackHeading : null,
+    querySelectorAll: (selector: string) => selector === '[data-count-for]' ? tiles : selector === '[data-open-for]' ? selectOptions : [],
+    getElementById: (name: string) => (name === 'new-count' ? line : toast),
+    addEventListener: (type: string, handler: (event: unknown) => Promise<void>) => { if (type === 'submit') submit = handler; },
+    createElement: () => ({ set innerHTML(_html: string) { fired.push('parsed'); }, content: { firstElementChild: next } }),
+  };
   const sandbox = {
-    document: {
-      querySelector: (selector: string) => selector === '[data-section="open"] .n' ? openHeading : selector === '[data-section="feedback"] .n' ? feedbackHeading : null,
-      querySelectorAll: (selector: string) => selector === '[data-count-for]' ? tiles : [],
-      getElementById: (name: string) => (name === 'new-count' ? line : toast),
-      addEventListener: (type: string, handler: (event: unknown) => Promise<void>) => { if (type === 'submit') submit = handler; },
-      createElement: () => ({ set innerHTML(_html: string) { fired.push('parsed'); }, content: { firstElementChild: next } }),
-    },
+    document: documentStub,
     HTMLFormElement: FakeForm,
     FormData: FakeFormData,
     TypeError,
@@ -1447,7 +1446,7 @@ function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number
   let prevented = false;
   const done = submit?.({ target: form, preventDefault: () => { prevented = true; }, submitter: options.submitter });
   const again = (): Promise<void> => submit?.({ target: form, preventDefault: () => undefined }) ?? Promise.resolve();
-  return { done: done ?? Promise.resolve(), again, line, anchor, poll: async (): Promise<void> => { await poll?.(); }, toast, calls, card, fired, prevented: () => prevented, next, tiles, openHeading, feedbackHeading };
+  return { done: done ?? Promise.resolve(), again, line, anchor, poll: async (): Promise<void> => { await poll?.(); }, toast, calls, card, fired, prevented: () => prevented, next, tiles, options: selectOptions, get title() { return documentStub.title; }, openHeading, feedbackHeading };
 }
 
 const savedReply = (verdict: string, open = 0, feedback = 0) => () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, item: { verdict, project: 'app' }, html: '<form class="card"></form>', counts: { project: { open, feedback, processed: 0 }, all: { open, feedback, processed: 0 } } }) });
@@ -1564,6 +1563,46 @@ test('answering a card already waiting, or filing a new one, does not change the
   open = 3;
   await filer.poll();
   assert.equal(filer.anchor.textContent, '1 new card, reload');
+});
+
+// Runs the poll's own setInterval callback, so a wrong branch or count
+// source in setTitle shows up as the wrong document.title, not as text
+// matched out of the script's source.
+test('the 30s poll sets the tab title from its own fetched count, and drops the prefix at zero', async () => {
+  let open = 3;
+  const run = runSubmit({ reply: savedReply('approved', 0, 0), serverOpen: () => open, submitter: { name: 'verdict', value: 'approved' } });
+  await run.done;
+  await run.poll();
+  assert.equal(run.title, '(3) All projects · Lookover');
+
+  open = 0;
+  await run.poll();
+  assert.equal(run.title, 'All projects · Lookover');
+});
+
+// counts.project and counts.all differ on purpose: pageScript renders the
+// all view, so a setTitle that read the wrong branch (the saved item's own
+// project instead of the current view) would show 9, not 4.
+test('a background save sets the tab title from the view\'s own count, not the saved item\'s project', async () => {
+  const reply = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, item: { verdict: 'approved', project: 'app' }, html: '<form class="card"></form>', counts: { project: { open: 9, feedback: 0, processed: 0 }, all: { open: 4, feedback: 0, processed: 0 } } }) });
+  const run = runSubmit({ reply, submitter: { name: 'verdict', value: 'approved' } });
+
+  await run.done;
+
+  assert.equal(run.title, '(4) All projects · Lookover');
+});
+
+test('a background save relabels the matching jump option with the saved count, bare at zero, and leaves the rest alone', async () => {
+  const some = runSubmit({ reply: savedReply('approved', 4, 2), submitter: { name: 'verdict', value: 'approved' } });
+  await some.done;
+  assert.equal(some.options[0]?.textContent, 'All projects (4)');
+  assert.equal(some.options[1]?.textContent, 'App (4)');
+  assert.equal(some.options[2]?.textContent, 'Other (9)');
+
+  const none = runSubmit({ reply: savedReply('approved', 0, 0), submitter: { name: 'verdict', value: 'approved' } });
+  await none.done;
+  assert.equal(none.options[0]?.textContent, 'All projects');
+  assert.equal(none.options[1]?.textContent, 'App');
 });
 
 test('every form keeps method, action and multipart encoding so the page works with no script, and the toast is a status region', async (t) => {
