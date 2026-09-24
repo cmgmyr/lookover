@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.3.0 - 2026-09-23
+
+- Changed the Found something else? form to stay open after a send, cleared with the cursor in Title, so you can file several cards in a row.
+- Added a Done button to the right of Send that closes the form and keeps anything half typed.
+- Changed a sent card to show up in Waiting for the agent right away, in the spot a reload would put it.
+- Changed the form's text fields to pause while a send is in flight, so the next card you start typing is not wiped.
+
 ## 0.2.1 - 2026-09-23
 
 - Fixed `lookover --version` crashing when installed from npm.
