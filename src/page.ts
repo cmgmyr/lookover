@@ -45,7 +45,7 @@ export function renderPage(view: PageView): string {
   const pollToken = view.token === undefined ? '' : `&t=${encodeURIComponent(view.token)}`;
   const newSection = view.projects.length === 0
     ? '<section><p class="empty">No projects registered. Run <code>lookover init --name &lt;name&gt;</code> first.</p></section>'
-    : `<section><details class="fold filer"><summary>Found something else?${CHEVRON}</summary><form class="card" method="post" enctype="multipart/form-data" action="/items/new${token}">${currentProject === undefined ? projectOptions : `<input type="hidden" name="project" value="${escapeHtml(currentProject?.slug ?? '')}">`}${tokenValue}${viewValue}<label for="new-title">Title</label><input id="new-title" name="title" required maxlength="200" placeholder="Short name for what you found"><label for="new-body">What you saw</label><textarea id="new-body" name="body" placeholder="Where you were, what happened, what you expected."></textarea>${photoInput('new-photo')}<button type="submit">Send to the agent</button></form></details></section>`;
+    : `<section><details class="fold filer"><summary>Found something else?${CHEVRON}</summary><form class="card" method="post" enctype="multipart/form-data" action="/items/new${token}">${currentProject === undefined ? projectOptions : `<input type="hidden" name="project" value="${escapeHtml(currentProject?.slug ?? '')}">`}${tokenValue}${viewValue}<label for="new-title">Title</label><input id="new-title" name="title" required maxlength="200" placeholder="Short name for what you found"><label for="new-body">What you saw</label><textarea id="new-body" name="body" placeholder="Where you were, what happened, what you expected."></textarea>${photoInput('new-photo')}<button type="submit">Send to the agent</button><button class="filer-done" type="button">Done</button></form></details></section>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtml(titleText)}</title>${favicon(accent)}<style>${themeVars(accent)}${STYLE}</style></head><body><main>
 <header>${wordmark()}<h1>${escapeHtml(title)}</h1>${currentProject === undefined ? projectsSubline(view) : `<p class="sub">${escapeHtml(placeLine(currentProject.root))}</p>`}</header>
 <nav aria-label="Projects" class="picker">${picker}</nav>
@@ -74,7 +74,7 @@ function viewField(view: CardView): string {
 
 /** One card, as the page renders it in its section; the JSON save routes send this back. */
 export function renderCard(view: CardView, item: Item, waiting: boolean): string {
-  return card(item, tokenQuery(view), tokenField(view) + viewField(view), waiting, view.retestVerdicts, projectBadge(view, item), cardAccent(view, item), view.files);
+  return card(item, tokenQuery(view), tokenField(view) + viewField(view), waiting, view.retestVerdicts, projectBadge(view, item), cardAttrs(view, item), view.files);
 }
 
 /** Every accent reaches the CSS as four validated hexes: a fill and its ink, per theme. */
@@ -241,14 +241,18 @@ function grouped(view: PageView, items: Item[]): Item[] {
   return [...items].sort((first, second) => name(first.project_id).localeCompare(name(second.project_id)));
 }
 
-/** In All view a card is one project's, so it brings that project's accent with it. */
-function cardAccent(view: CardView, item: Item): string {
+/**
+ * In All view a card is one project's, so it brings that project's accent and
+ * its name with it. The name lets the page script slot a freshly saved card
+ * where grouped() would have put it.
+ */
+function cardAttrs(view: CardView, item: Item): string {
   if (view.current !== 'all') return '';
   const project = view.projects.find((entry) => entry.id === item.project_id);
-  return project === undefined ? '' : ` style="${accentVars(safeAccent(project.accent))}"`;
+  return project === undefined ? '' : ` data-project-name="${escapeHtml(project.name)}" style="${accentVars(safeAccent(project.accent))}"`;
 }
 
-function card(item: Item, token: string, tokenValue: string, waiting: boolean, retestVerdicts: Map<number, string | null> | undefined, projectBadge: string, accentStyle: string, files: Map<number, FileRow[]> | undefined): string {
+function card(item: Item, token: string, tokenValue: string, waiting: boolean, retestVerdicts: Map<number, string | null> | undefined, projectBadge: string, attrs: string, files: Map<number, FileRow[]> | undefined): string {
   const meta = [item.source, item.ref].filter((value) => value !== null && value !== '').map((value) => escapeHtml(value ?? ''));
   if (item.url !== null && !isWebUrl(item.url)) meta.push(escapeHtml(item.url));
   if (waiting && item.feedback_at !== null) meta.push(`saved ${escapeHtml(item.feedback_at)}`);
@@ -267,7 +271,7 @@ function card(item: Item, token: string, tokenValue: string, waiting: boolean, r
   // Above the title, not inside it: inline chips made the title wrap around
   // them and the project badge land mid-sentence.
   const tags = chips === '' ? '' : `<p class="tags">${chips}</p>`;
-  return `<form${accentStyle} class="card" id="item-${item.id}" method="post" enctype="multipart/form-data" action="/items/${item.id}/feedback${token}">${tags}<h3>${escapeHtml(item.title)}</h3>${source}${open}${retest}${body}${strip}${waiting ? `<details class="fold answer"><summary>Change your answer${CHEVRON}</summary><div class="reply">${answer}</div></details>` : `<div class="reply">${answer}</div>`}</form>`;
+  return `<form${attrs} class="card" id="item-${item.id}" method="post" enctype="multipart/form-data" action="/items/${item.id}/feedback${token}">${tags}<h3>${escapeHtml(item.title)}</h3>${source}${open}${retest}${body}${strip}${waiting ? `<details class="fold answer"><summary>Change your answer${CHEVRON}</summary><div class="reply">${answer}</div></details>` : `<div class="reply">${answer}</div>`}</form>`;
 }
 
 /**
@@ -349,6 +353,7 @@ const renderPicks=(form)=>{const input=photoFor(form),picks=picksFor(form);if(!i
 const attachFiles=(form,files)=>{const input=photoFor(form);if(!input||files.length===0)return;const current=[...input.files];if(current.length+files.length>maxFiles){say('too many files: '+(current.length+files.length)+' sent, '+maxFiles+' allowed at once');return}const tooLarge=files.find((file)=>file.size>maxBytes);if(tooLarge){say(fileLabel(tooLarge)+' is '+(tooLarge.size/1024/1024).toFixed(1)+' MB; the limit is '+(maxBytes/1024/1024)+' MB per file');return}if(typeof DataTransfer==='undefined'){say('Could not attach pasted photos in this browser.');return}const transfer=new DataTransfer();for(const file of [...current,...files])transfer.items.add(file);input.files=transfer.files;renderPicks(form)};
 document.addEventListener('change',(event)=>{const input=event.target;if(!(input instanceof HTMLInputElement)||!input.matches('.photo-input'))return;renderPicks(input.closest('form.card'))});
 document.addEventListener('paste',(event)=>{const target=event.target;const form=target instanceof Element?target.closest('form.card'):null;if(!form)return;const files=[...(event.clipboardData?.files??[])].filter((file)=>file.type.startsWith('image/'));if(files.length===0)return;event.preventDefault();attachFiles(form,files)});
+document.addEventListener('click',(event)=>{const target=event.target;if(!(target instanceof HTMLElement)||!target.matches('button.filer-done'))return;const filer=target.closest('.filer');if(filer)filer.open=false});
 document.addEventListener('click',(event)=>{const target=event.target;if(!(target instanceof HTMLElement)||!target.matches('.pick-remove'))return;const form=target.closest('form.card'),input=form&&photoFor(form);if(!form||!input||typeof DataTransfer==='undefined')return;const index=Number(target.dataset.index);const transfer=new DataTransfer();[...input.files].forEach((file,position)=>{if(position!==index)transfer.items.add(file)});input.files=transfer.files;renderPicks(form)});
 const updateCounts=(counts,savedProject)=>{if(!counts)return;const set=(selector,value)=>{const el=document.querySelector(selector);if(el)el.textContent=String(value)};const valueFor=(key)=>key==='all'?counts.all?.open:key===${JSON.stringify(project)}||key===savedProject?counts.project?.open:undefined;const tiles=document.querySelectorAll('[data-count-for]');for(const tile of tiles){const value=valueFor(tile.dataset.countFor);if(value!==undefined)tile.textContent=String(value)}const options=document.querySelectorAll('[data-open-for]');for(const opt of options){const value=valueFor(opt.dataset.openFor);if(value!==undefined)opt.textContent=value>0?opt.dataset.name+' ('+value+')':opt.dataset.name}const current=${JSON.stringify(project)}==='all'?counts.all:counts.project;set('[data-section="open"] .n',current?.open);set('[data-section="feedback"] .n',current?.feedback);initial=current?.open??initial;setTitle(initial)};
 document.addEventListener('submit',async(event)=>{
@@ -366,11 +371,16 @@ const response=await fetch(form.action,{method:'POST',body,headers:{accept:'appl
 const reply=await response.json().catch(()=>null);
 if(!response.ok||!reply||!reply.ok)throw new Error(reply&&reply.error||'Could not save ('+response.status+')');
 updateCounts(reply.counts,reply.item&&reply.item.project);
-if(filer){const project=form.querySelector('select');const picked=project&&project.value;form.reset();if(project)project.value=picked;filer.open=false;say('Sent to the agent')}
-else{
 const holder=document.createElement('template');holder.innerHTML=reply.html.trim();
 const next=holder.content.firstElementChild;
-next.classList.add('settle');form.replaceWith(next);
+next.classList.add('settle');
+if(filer){const project=form.querySelector('select');const picked=project&&project.value;form.reset();if(project)project.value=picked;
+const waiting=document.querySelector('[data-section="feedback"]').parentElement;const none=waiting.querySelector('p.none');if(none)none.remove();
+const name=next.dataset.projectName||'';const before=[...waiting.querySelectorAll('form.card')].find((c)=>(c.dataset.projectName||'').localeCompare(name)>=0);
+if(before)before.before(next);else waiting.append(next);
+const title=form.querySelector('#new-title');if(title)title.focus({preventScroll:true});say('Sent to the agent')}
+else{
+form.replaceWith(next);
 const summary=next.querySelector('summary');if(summary)summary.focus({preventScroll:true});
 say(reply.item.verdict==='approved'?'Approved':reply.item.verdict==='needs-work'?'Needs work saved':'Saved')}
 clearPicks(form);
@@ -544,6 +554,7 @@ color:var(--ink-soft);vertical-align:middle}
 button{display:block;width:100%;min-height:50px;margin:1rem 0 0;padding:0 1.2rem;font:inherit;font-size:17px;
 font-weight:600;color:var(--accent-ink);background:var(--accent);border:0;border-radius:12px;cursor:pointer}
 @media(min-width:34rem){button{width:auto;min-width:11rem}}
+button.filer-done{color:var(--ink);background:var(--fill)}
 button.verdict{width:auto;min-width:0;margin:0;padding:0 .5rem;font-size:16px;color:var(--ink);background:var(--fill);white-space:nowrap}
 button.verdict.approved{color:var(--accent-ink);background:var(--accent)}
 /* The answer already saved, ringed in ink: a state, where the accent is an identity. */

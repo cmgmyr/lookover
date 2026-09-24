@@ -64,6 +64,9 @@ test('serves redirects, project pages, all pages and counts', async (t) => {
   assert.match(allHtml, /class="project-badge">App<\/span>/);
   const projectHtml = await (await get(`${base}/p/app`)).text();
   assert.doesNotMatch(projectHtml, /class="project-badge">/);
+  assert.match(allHtml, /<form data-project-name="App" style="[^"]*" class="card" id="item-\d+"/);
+  assert.doesNotMatch(projectHtml, /data-project-name/);
+  assert.match(projectHtml, /<button class="filer-done" type="button">Done<\/button>/);
   assert.deepEqual(await (await get(`${base}/api/counts?project=app`)).json(), { open: 2, feedback: 0, processed: 0 });
   assert.equal(item.status, 'open');
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -1428,27 +1431,31 @@ test('the page script removes a pasted image and revokes its preview URL', () =>
   assert.deepEqual(run.revoked, ['blob:one.png', 'blob:two.png']);
 });
 
+interface FakeWaitingCard { dataset: Record<string, string>; before: (node: FakeWaitingCard) => void }
 interface FakeCard { dataset: Record<string, string>; buttons: { name: string; value: string; disabled: boolean }[]; replaced?: unknown; reset?: boolean; folded: boolean; filer?: { open: boolean }; action: string }
 
 // Runs the page's own script against a stub DOM, so what it does on submit is
 // observed rather than matched as text. Returns the handler's promise.
-function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>; filer?: boolean; submitter?: { name: string; value: string }; folded?: boolean; openCards?: number; serverOpen?: () => number; select?: { value: string } }) {
+function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>; filer?: boolean; submitter?: { name: string; value: string }; folded?: boolean; openCards?: number; serverOpen?: () => number; select?: { value: string }; idle?: boolean; newProject?: string; waitingProjects?: string[]; noneLine?: boolean }) {
   const toast = { textContent: '', shown: false, classList: { add: (name: string) => { if (name === 'show') toast.shown = true; }, remove: (name: string) => { if (name === 'show') toast.shown = false; } } };
   const calls: { url: string; init: { method: string; body: Map<string, string>; headers: Record<string, string> } }[] = [];
   const fired: string[] = [];
   class FakeForm {}
+  class FakeElement {}
   class FakeFormData extends Map<string, string> {
     constructor(form: FakeCard) { super(); this.set('feedback', 'the footer jumps'); this.set('action-was', form.action); }
   }
-  const next = { classList: { add: (name: string) => fired.push(`class:${name}`) }, querySelector: (): { focus: (o: unknown) => void } => ({ focus: (o: unknown) => fired.push(`focus:${JSON.stringify(o)}`) }) };
+  const next = { dataset: (options.newProject === undefined ? {} : { projectName: options.newProject }) as Record<string, string>, classList: { add: (name: string) => fired.push(`class:${name}`) }, querySelector: (): { focus: (o: unknown) => void } => ({ focus: (o: unknown) => fired.push(`focus:${JSON.stringify(o)}`) }) };
+  const filerEl = options.filer === true ? { open: true } : null;
   const card: FakeCard = { dataset: {}, buttons: [{ name: 'verdict', value: 'approved', disabled: false }, { name: 'verdict', value: 'needs-work', disabled: false }], folded: options.folded ?? false, action: '/items/7/feedback?t=x' };
+  if (filerEl) card.filer = filerEl;
   const form = Object.assign(Object.create(FakeForm.prototype), {
     dataset: card.dataset,
     get action() { return card.action; },
     matches: (selector: string) => selector === 'form.card',
-    closest: () => (options.filer === true ? (card.filer = { open: true }) : null),
+    closest: () => filerEl,
     querySelectorAll: () => card.buttons,
-    querySelector: (selector: string) => (selector === 'select' ? (options.select ?? null) : card.folded ? {} : null),
+    querySelector: (selector: string) => (selector === 'select' ? (options.select ?? null) : selector === '#new-title' ? { focus: (o: unknown) => fired.push(`focus-title:${JSON.stringify(o)}`) } : card.folded ? {} : null),
     reset: () => { card.reset = true; if (options.select) options.select.value = 'first'; },
     replaceWith: (node: unknown) => { card.replaced = node; fired.push('replaceWith'); },
   });
@@ -1456,21 +1463,33 @@ function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number
   const line = { hidden: true, querySelector: () => anchor };
   const openHeading = { textContent: String(options.openCards ?? 0) };
   const feedbackHeading = { textContent: '0' };
+  const waitingCards: FakeWaitingCard[] = [];
+  const waitingCard = (name: string): FakeWaitingCard => { const entry: FakeWaitingCard = { dataset: { projectName: name }, before: (node) => { waitingCards.splice(waitingCards.indexOf(entry), 0, node); } }; return entry; };
+  for (const name of options.waitingProjects ?? []) waitingCards.push(waitingCard(name));
+  const none = { removed: false, remove: () => { none.removed = true; } };
+  const waitingSection = {
+    querySelector: (selector: string) => (selector === 'p.none' && options.noneLine === true && !none.removed ? none : null),
+    querySelectorAll: () => waitingCards,
+    append: (node: FakeWaitingCard) => { waitingCards.push(node); },
+  };
+  const feedbackTitle = { parentElement: waitingSection };
   const tiles = [{ dataset: { countFor: 'all' }, textContent: '0' }, { dataset: { countFor: 'app' }, textContent: String(options.openCards ?? 0) }, { dataset: { countFor: 'other' }, textContent: '9' }];
   const selectOptions = [{ dataset: { openFor: 'all', name: 'All projects' }, textContent: 'All projects' }, { dataset: { openFor: 'app', name: 'App' }, textContent: 'App' }, { dataset: { openFor: 'other', name: 'Other' }, textContent: 'Other (9)' }];
   let poll: (() => Promise<void>) | undefined;
   let submit: ((event: unknown) => Promise<void>) | undefined;
+  const clicks: ((event: unknown) => unknown)[] = [];
   const documentStub = {
     title: '',
-    querySelector: (selector: string) => selector === '[data-section="open"] .n' ? openHeading : selector === '[data-section="feedback"] .n' ? feedbackHeading : null,
+    querySelector: (selector: string) => selector === '[data-section="open"] .n' ? openHeading : selector === '[data-section="feedback"] .n' ? feedbackHeading : selector === '[data-section="feedback"]' ? feedbackTitle : null,
     querySelectorAll: (selector: string) => selector === '[data-count-for]' ? tiles : selector === '[data-open-for]' ? selectOptions : [],
     getElementById: (name: string) => (name === 'new-count' ? line : toast),
-    addEventListener: (type: string, handler: (event: unknown) => Promise<void>) => { if (type === 'submit') submit = handler; },
+    addEventListener: (type: string, handler: (event: unknown) => Promise<void>) => { if (type === 'submit') submit = handler; if (type === 'click') clicks.push(handler); },
     createElement: () => ({ set innerHTML(_html: string) { fired.push('parsed'); }, content: { firstElementChild: next } }),
   };
   const sandbox = {
     document: documentStub,
     HTMLFormElement: FakeForm,
+    HTMLElement: FakeElement,
     FormData: FakeFormData,
     TypeError,
     Error,
@@ -1487,9 +1506,11 @@ function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number
   };
   vm.runInNewContext(pageScript(options.openCards), sandbox);
   let prevented = false;
-  const done = submit?.({ target: form, preventDefault: () => { prevented = true; }, submitter: options.submitter });
+  const done = options.idle === true ? undefined : submit?.({ target: form, preventDefault: () => { prevented = true; }, submitter: options.submitter });
   const again = (): Promise<void> => submit?.({ target: form, preventDefault: () => undefined }) ?? Promise.resolve();
-  return { done: done ?? Promise.resolve(), again, line, anchor, poll: async (): Promise<void> => { await poll?.(); }, toast, calls, card, fired, prevented: () => prevented, next, tiles, options: selectOptions, get title() { return documentStub.title; }, openHeading, feedbackHeading };
+  const doneButton = Object.assign(Object.create(FakeElement.prototype), { matches: (selector: string) => selector === 'button.filer-done', closest: () => filerEl });
+  const clickDone = (): void => { for (const handler of clicks) handler({ target: doneButton }); };
+  return { done: done ?? Promise.resolve(), again, clickDone, waitingCards, none, next, line, anchor, poll: async (): Promise<void> => { await poll?.(); }, toast, calls, card, fired, prevented: () => prevented, tiles, options: selectOptions, get title() { return documentStub.title; }, openHeading, feedbackHeading };
 }
 
 const savedReply = (verdict: string, open = 0, feedback = 0) => () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, item: { verdict, project: 'app' }, html: '<form class="card"></form>', counts: { project: { open, feedback, processed: 0 }, all: { open, feedback, processed: 0 } } }) });
@@ -1524,14 +1545,87 @@ test('the page script applies saved counts while saying Approved and never scrol
   assert.ok(!run.fired.includes('scrollTo') && !run.fired.includes('navigate'));
 });
 
-test('the page script clears the filer, closes its fold and says Sent to the agent instead of swapping a card', async () => {
+test('the page script clears the filer, keeps its fold open, focuses Title and says Sent to the agent instead of swapping a card', async () => {
   const run = runSubmit({ reply: savedReply('note'), filer: true });
   await run.done;
 
   assert.equal(run.card.reset, true);
-  assert.equal(run.card.filer?.open, false);
+  assert.equal(run.card.filer?.open, true);
   assert.equal(run.card.replaced, undefined);
+  assert.ok(run.fired.includes('focus-title:{"preventScroll":true}'));
   assert.equal(run.toast.textContent, 'Sent to the agent');
+});
+
+test('the page script puts a filed card first in a project view\'s waiting section and drops the Nothing saved yet line', async () => {
+  const run = runSubmit({ reply: savedReply('note'), filer: true, waitingProjects: ['', ''], noneLine: true });
+  await run.done;
+
+  assert.equal(run.none.removed, true);
+  assert.equal(run.waitingCards.length, 3);
+  assert.equal(run.waitingCards[0], run.next);
+  assert.ok(run.fired.includes('class:settle'));
+});
+
+test('the page script fills an empty waiting section with the first filed card', async () => {
+  const run = runSubmit({ reply: savedReply('note'), filer: true, noneLine: true });
+  await run.done;
+
+  assert.equal(run.none.removed, true);
+  assert.deepEqual(run.waitingCards, [run.next]);
+});
+
+test('the page script slots a filed card into All view in project-name order, ahead of that project\'s older cards', async () => {
+  const names = (run: ReturnType<typeof runSubmit>): string[] => run.waitingCards.map((entry) => ((entry as unknown) === run.next ? 'NEW' : entry.dataset.projectName ?? ''));
+  const existing = ['Alpha', 'Alpha', 'Charlie'];
+  const cases: [string, string[]][] = [
+    ['Alpha', ['NEW', 'Alpha', 'Alpha', 'Charlie']],
+    ['Bravo', ['Alpha', 'Alpha', 'NEW', 'Charlie']],
+    ['Charlie', ['Alpha', 'Alpha', 'NEW', 'Charlie']],
+    ['Delta', ['Alpha', 'Alpha', 'Charlie', 'NEW']],
+    ['Aardvark', ['NEW', 'Alpha', 'Alpha', 'Charlie']],
+  ];
+  for (const [project, expected] of cases) {
+    const run = runSubmit({ reply: savedReply('note'), filer: true, newProject: project, waitingProjects: existing });
+    await run.done;
+    assert.deepEqual(names(run), expected, `filed under ${project}`);
+  }
+});
+
+test('Done closes the filer without resetting the draft or sending anything', () => {
+  const run = runSubmit({ reply: savedReply('note'), filer: true, idle: true });
+  run.clickDone();
+
+  assert.equal(run.card.filer?.open, false);
+  assert.equal(run.card.reset, undefined);
+  assert.equal(run.calls.length, 0);
+});
+
+test('a failed filer send leaves the fold open, the draft in place and the waiting section untouched', async () => {
+  const refused = runSubmit({ reply: () => Promise.resolve({ ok: false, status: 413, json: () => Promise.resolve({ ok: false, error: 'too big' }) }), filer: true, waitingProjects: ['Alpha'], noneLine: true });
+  await refused.done;
+  const offline = runSubmit({ reply: () => Promise.reject(new TypeError('Failed to fetch')), filer: true, waitingProjects: ['Alpha'], noneLine: true });
+  await offline.done;
+
+  for (const run of [refused, offline]) {
+    assert.equal(run.card.filer?.open, true);
+    assert.equal(run.card.reset, undefined);
+    assert.equal(run.none.removed, false);
+    assert.equal(run.waitingCards.length, 1);
+    assert.ok(run.card.buttons.every((button) => !button.disabled));
+    assert.ok(!run.fired.some((entry) => entry.startsWith('focus-title')));
+  }
+});
+
+test('a second filer submit while one is in flight sends and inserts nothing more', async () => {
+  let release: () => void = () => undefined;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const run = runSubmit({ filer: true, reply: async () => { await pending; return savedReply('note')(); } });
+  const second = run.again();
+  release();
+  await Promise.all([run.done, second]);
+
+  assert.equal(run.calls.length, 1);
+  assert.equal(run.waitingCards.length, 1);
 });
 
 test('the page script keeps the filer\'s Project select on the tester\'s choice after clearing the form', async () => {
