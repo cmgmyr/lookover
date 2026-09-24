@@ -66,7 +66,7 @@ test('serves redirects, project pages, all pages and counts', async (t) => {
   assert.doesNotMatch(projectHtml, /class="project-badge">/);
   assert.match(allHtml, /<form data-project-name="App" style="[^"]*" class="card" id="item-\d+"/);
   assert.doesNotMatch(projectHtml, /data-project-name/);
-  assert.match(projectHtml, /<button class="filer-done" type="button">Done<\/button>/);
+  assert.match(projectHtml, /<button class="filer-done" type="button" hidden>Done<\/button>/);
   assert.deepEqual(await (await get(`${base}/api/counts?project=app`)).json(), { open: 2, feedback: 0, processed: 0 });
   assert.equal(item.status, 'open');
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -1379,6 +1379,7 @@ function runPaste(options: { files: { name: string; type: string; size: number }
   const sandbox = {
     document: {
       querySelector: () => null,
+      querySelectorAll: () => [],
       getElementById: () => toast,
       createElement: (tagName: string) => new FakeElement(tagName),
       addEventListener: (type: string, handler: unknown) => { if (type === 'paste') paste = handler as typeof paste; if (type === 'click') click = handler as typeof click; },
@@ -1432,7 +1433,7 @@ test('the page script removes a pasted image and revokes its preview URL', () =>
 });
 
 interface FakeWaitingCard { dataset: Record<string, string>; before: (node: FakeWaitingCard) => void }
-interface FakeCard { dataset: Record<string, string>; buttons: { name: string; value: string; disabled: boolean }[]; replaced?: unknown; reset?: boolean; folded: boolean; filer?: { open: boolean }; action: string }
+interface FakeCard { dataset: Record<string, string>; buttons: { name: string; value: string; disabled: boolean }[]; replaced?: unknown; reset?: boolean; folded: boolean; filer?: { open: boolean }; fields: { readOnly: boolean }[]; action: string }
 
 // Runs the page's own script against a stub DOM, so what it does on submit is
 // observed rather than matched as text. Returns the handler's promise.
@@ -1447,14 +1448,14 @@ function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number
   }
   const next = { dataset: (options.newProject === undefined ? {} : { projectName: options.newProject }) as Record<string, string>, classList: { add: (name: string) => fired.push(`class:${name}`) }, querySelector: (): { focus: (o: unknown) => void } => ({ focus: (o: unknown) => fired.push(`focus:${JSON.stringify(o)}`) }) };
   const filerEl = options.filer === true ? { open: true } : null;
-  const card: FakeCard = { dataset: {}, buttons: [{ name: 'verdict', value: 'approved', disabled: false }, { name: 'verdict', value: 'needs-work', disabled: false }], folded: options.folded ?? false, action: '/items/7/feedback?t=x' };
+  const card: FakeCard = { dataset: {}, buttons: [{ name: 'verdict', value: 'approved', disabled: false }, { name: 'verdict', value: 'needs-work', disabled: false }], folded: options.folded ?? false, fields: [{ readOnly: false }, { readOnly: false }], action: '/items/7/feedback?t=x' };
   if (filerEl) card.filer = filerEl;
   const form = Object.assign(Object.create(FakeForm.prototype), {
     dataset: card.dataset,
     get action() { return card.action; },
     matches: (selector: string) => selector === 'form.card',
     closest: () => filerEl,
-    querySelectorAll: () => card.buttons,
+    querySelectorAll: (selector: string) => (selector === 'button' ? card.buttons : card.fields),
     querySelector: (selector: string) => (selector === 'select' ? (options.select ?? null) : selector === '#new-title' ? { focus: (o: unknown) => fired.push(`focus-title:${JSON.stringify(o)}`) } : card.folded ? {} : null),
     reset: () => { card.reset = true; if (options.select) options.select.value = 'first'; },
     replaceWith: (node: unknown) => { card.replaced = node; fired.push('replaceWith'); },
@@ -1464,7 +1465,7 @@ function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number
   const openHeading = { textContent: String(options.openCards ?? 0) };
   const feedbackHeading = { textContent: '0' };
   const waitingCards: FakeWaitingCard[] = [];
-  const waitingCard = (name: string): FakeWaitingCard => { const entry: FakeWaitingCard = { dataset: { projectName: name }, before: (node) => { waitingCards.splice(waitingCards.indexOf(entry), 0, node); } }; return entry; };
+  const waitingCard = (name: string): FakeWaitingCard => { const entry: FakeWaitingCard = { dataset: name === '' ? {} : { projectName: name }, before: (node) => { waitingCards.splice(waitingCards.indexOf(entry), 0, node); } }; return entry; };
   for (const name of options.waitingProjects ?? []) waitingCards.push(waitingCard(name));
   const none = { removed: false, remove: () => { none.removed = true; } };
   const waitingSection = {
@@ -1475,13 +1476,14 @@ function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number
   const feedbackTitle = { parentElement: waitingSection };
   const tiles = [{ dataset: { countFor: 'all' }, textContent: '0' }, { dataset: { countFor: 'app' }, textContent: String(options.openCards ?? 0) }, { dataset: { countFor: 'other' }, textContent: '9' }];
   const selectOptions = [{ dataset: { openFor: 'all', name: 'All projects' }, textContent: 'All projects' }, { dataset: { openFor: 'app', name: 'App' }, textContent: 'App' }, { dataset: { openFor: 'other', name: 'Other' }, textContent: 'Other (9)' }];
+  const doneButton = Object.assign(Object.create(FakeElement.prototype), { hidden: true, matches: (selector: string) => selector === 'button.filer-done', closest: () => filerEl });
   let poll: (() => Promise<void>) | undefined;
   let submit: ((event: unknown) => Promise<void>) | undefined;
   const clicks: ((event: unknown) => unknown)[] = [];
   const documentStub = {
     title: '',
     querySelector: (selector: string) => selector === '[data-section="open"] .n' ? openHeading : selector === '[data-section="feedback"] .n' ? feedbackHeading : selector === '[data-section="feedback"]' ? feedbackTitle : null,
-    querySelectorAll: (selector: string) => selector === '[data-count-for]' ? tiles : selector === '[data-open-for]' ? selectOptions : [],
+    querySelectorAll: (selector: string) => selector === '[data-count-for]' ? tiles : selector === '[data-open-for]' ? selectOptions : selector === 'button.filer-done' ? [doneButton] : [],
     getElementById: (name: string) => (name === 'new-count' ? line : toast),
     addEventListener: (type: string, handler: (event: unknown) => Promise<void>) => { if (type === 'submit') submit = handler; if (type === 'click') clicks.push(handler); },
     createElement: () => ({ set innerHTML(_html: string) { fired.push('parsed'); }, content: { firstElementChild: next } }),
@@ -1508,9 +1510,8 @@ function runSubmit(options: { reply: () => Promise<{ ok: boolean; status: number
   let prevented = false;
   const done = options.idle === true ? undefined : submit?.({ target: form, preventDefault: () => { prevented = true; }, submitter: options.submitter });
   const again = (): Promise<void> => submit?.({ target: form, preventDefault: () => undefined }) ?? Promise.resolve();
-  const doneButton = Object.assign(Object.create(FakeElement.prototype), { matches: (selector: string) => selector === 'button.filer-done', closest: () => filerEl });
   const clickDone = (): void => { for (const handler of clicks) handler({ target: doneButton }); };
-  return { done: done ?? Promise.resolve(), again, clickDone, waitingCards, none, next, line, anchor, poll: async (): Promise<void> => { await poll?.(); }, toast, calls, card, fired, prevented: () => prevented, tiles, options: selectOptions, get title() { return documentStub.title; }, openHeading, feedbackHeading };
+  return { done: done ?? Promise.resolve(), again, clickDone, doneButton, waitingCards, none, next, line, anchor, poll: async (): Promise<void> => { await poll?.(); }, toast, calls, card, fired, prevented: () => prevented, tiles, options: selectOptions, get title() { return documentStub.title; }, openHeading, feedbackHeading };
 }
 
 const savedReply = (verdict: string, open = 0, feedback = 0) => () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, item: { verdict, project: 'app' }, html: '<form class="card"></form>', counts: { project: { open, feedback, processed: 0 }, all: { open, feedback, processed: 0 } } }) });
@@ -1553,6 +1554,7 @@ test('the page script clears the filer, keeps its fold open, focuses Title and s
   assert.equal(run.card.filer?.open, true);
   assert.equal(run.card.replaced, undefined);
   assert.ok(run.fired.includes('focus-title:{"preventScroll":true}'));
+  assert.ok(!run.fired.some((entry) => entry.startsWith('focus:')), 'focus stays on Title, never moves to the new card');
   assert.equal(run.toast.textContent, 'Sent to the agent');
 });
 
@@ -1591,6 +1593,11 @@ test('the page script slots a filed card into All view in project-name order, ah
   }
 });
 
+test('the page script un-hides Done, which the markup ships hidden for a page with no script', () => {
+  const run = runSubmit({ reply: savedReply('note'), filer: true, idle: true });
+  assert.equal(run.doneButton.hidden, false);
+});
+
 test('Done closes the filer without resetting the draft or sending anything', () => {
   const run = runSubmit({ reply: savedReply('note'), filer: true, idle: true });
   run.clickDone();
@@ -1612,6 +1619,7 @@ test('a failed filer send leaves the fold open, the draft in place and the waiti
     assert.equal(run.none.removed, false);
     assert.equal(run.waitingCards.length, 1);
     assert.ok(run.card.buttons.every((button) => !button.disabled));
+    assert.ok(run.card.fields.every((field) => !field.readOnly));
     assert.ok(!run.fired.some((entry) => entry.startsWith('focus-title')));
   }
 });
@@ -1620,10 +1628,12 @@ test('a second filer submit while one is in flight sends and inserts nothing mor
   let release: () => void = () => undefined;
   const pending = new Promise<void>((resolve) => { release = resolve; });
   const run = runSubmit({ filer: true, reply: async () => { await pending; return savedReply('note')(); } });
+  assert.ok(run.card.fields.every((field) => field.readOnly), 'text fields lock while the send is in flight');
   const second = run.again();
   release();
   await Promise.all([run.done, second]);
 
+  assert.ok(run.card.fields.every((field) => !field.readOnly), 'text fields unlock once the send settles');
   assert.equal(run.calls.length, 1);
   assert.equal(run.waitingCards.length, 1);
 });

@@ -45,7 +45,7 @@ export function renderPage(view: PageView): string {
   const pollToken = view.token === undefined ? '' : `&t=${encodeURIComponent(view.token)}`;
   const newSection = view.projects.length === 0
     ? '<section><p class="empty">No projects registered. Run <code>lookover init --name &lt;name&gt;</code> first.</p></section>'
-    : `<section><details class="fold filer"><summary>Found something else?${CHEVRON}</summary><form class="card" method="post" enctype="multipart/form-data" action="/items/new${token}">${currentProject === undefined ? projectOptions : `<input type="hidden" name="project" value="${escapeHtml(currentProject?.slug ?? '')}">`}${tokenValue}${viewValue}<label for="new-title">Title</label><input id="new-title" name="title" required maxlength="200" placeholder="Short name for what you found"><label for="new-body">What you saw</label><textarea id="new-body" name="body" placeholder="Where you were, what happened, what you expected."></textarea>${photoInput('new-photo')}<button type="submit">Send to the agent</button><button class="filer-done" type="button">Done</button></form></details></section>`;
+    : `<section><details class="fold filer"><summary>Found something else?${CHEVRON}</summary><form class="card" method="post" enctype="multipart/form-data" action="/items/new${token}">${currentProject === undefined ? projectOptions : `<input type="hidden" name="project" value="${escapeHtml(currentProject?.slug ?? '')}">`}${tokenValue}${viewValue}<label for="new-title">Title</label><input id="new-title" name="title" required maxlength="200" placeholder="Short name for what you found"><label for="new-body">What you saw</label><textarea id="new-body" name="body" placeholder="Where you were, what happened, what you expected."></textarea>${photoInput('new-photo')}<button type="submit">Send to the agent</button><button class="filer-done" type="button" hidden>Done</button></form></details></section>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtml(titleText)}</title>${favicon(accent)}<style>${themeVars(accent)}${STYLE}</style></head><body><main>
 <header>${wordmark()}<h1>${escapeHtml(title)}</h1>${currentProject === undefined ? projectsSubline(view) : `<p class="sub">${escapeHtml(placeLine(currentProject.root))}</p>`}</header>
 <nav aria-label="Projects" class="picker">${picker}</nav>
@@ -353,6 +353,7 @@ const renderPicks=(form)=>{const input=photoFor(form),picks=picksFor(form);if(!i
 const attachFiles=(form,files)=>{const input=photoFor(form);if(!input||files.length===0)return;const current=[...input.files];if(current.length+files.length>maxFiles){say('too many files: '+(current.length+files.length)+' sent, '+maxFiles+' allowed at once');return}const tooLarge=files.find((file)=>file.size>maxBytes);if(tooLarge){say(fileLabel(tooLarge)+' is '+(tooLarge.size/1024/1024).toFixed(1)+' MB; the limit is '+(maxBytes/1024/1024)+' MB per file');return}if(typeof DataTransfer==='undefined'){say('Could not attach pasted photos in this browser.');return}const transfer=new DataTransfer();for(const file of [...current,...files])transfer.items.add(file);input.files=transfer.files;renderPicks(form)};
 document.addEventListener('change',(event)=>{const input=event.target;if(!(input instanceof HTMLInputElement)||!input.matches('.photo-input'))return;renderPicks(input.closest('form.card'))});
 document.addEventListener('paste',(event)=>{const target=event.target;const form=target instanceof Element?target.closest('form.card'):null;if(!form)return;const files=[...(event.clipboardData?.files??[])].filter((file)=>file.type.startsWith('image/'));if(files.length===0)return;event.preventDefault();attachFiles(form,files)});
+for(const done of document.querySelectorAll('button.filer-done'))done.hidden=false;
 document.addEventListener('click',(event)=>{const target=event.target;if(!(target instanceof HTMLElement)||!target.matches('button.filer-done'))return;const filer=target.closest('.filer');if(filer)filer.open=false});
 document.addEventListener('click',(event)=>{const target=event.target;if(!(target instanceof HTMLElement)||!target.matches('.pick-remove'))return;const form=target.closest('form.card'),input=form&&photoFor(form);if(!form||!input||typeof DataTransfer==='undefined')return;const index=Number(target.dataset.index);const transfer=new DataTransfer();[...input.files].forEach((file,position)=>{if(position!==index)transfer.items.add(file)});input.files=transfer.files;renderPicks(form)});
 const updateCounts=(counts,savedProject)=>{if(!counts)return;const set=(selector,value)=>{const el=document.querySelector(selector);if(el)el.textContent=String(value)};const valueFor=(key)=>key==='all'?counts.all?.open:key===${JSON.stringify(project)}||key===savedProject?counts.project?.open:undefined;const tiles=document.querySelectorAll('[data-count-for]');for(const tile of tiles){const value=valueFor(tile.dataset.countFor);if(value!==undefined)tile.textContent=String(value)}const options=document.querySelectorAll('[data-open-for]');for(const opt of options){const value=valueFor(opt.dataset.openFor);if(value!==undefined)opt.textContent=value>0?opt.dataset.name+' ('+value+')':opt.dataset.name}const current=${JSON.stringify(project)}==='all'?counts.all:counts.project;set('[data-section="open"] .n',current?.open);set('[data-section="feedback"] .n',current?.feedback);initial=current?.open??initial;setTitle(initial)};
@@ -363,9 +364,10 @@ event.preventDefault();
 if(form.dataset.busy)return;
 const filer=form.closest('.filer');
 const buttons=[...form.querySelectorAll('button')];
+const fields=[...form.querySelectorAll('input:not([type]),input[type=text],textarea')];
 const body=new FormData(form);
 if(event.submitter&&event.submitter.name)body.set(event.submitter.name,event.submitter.value);
-form.dataset.busy='1';buttons.forEach((b)=>{b.disabled=true});
+form.dataset.busy='1';buttons.forEach((b)=>{b.disabled=true});fields.forEach((f)=>{f.readOnly=true});
 try{
 const response=await fetch(form.action,{method:'POST',body,headers:{accept:'application/json'}});
 const reply=await response.json().catch(()=>null);
@@ -385,7 +387,7 @@ const summary=next.querySelector('summary');if(summary)summary.focus({preventScr
 say(reply.item.verdict==='approved'?'Approved':reply.item.verdict==='needs-work'?'Needs work saved':'Saved')}
 clearPicks(form);
 }catch(error){say(error instanceof TypeError?'Could not reach lookover. It may have saved; reload before retrying.':error.message)}
-finally{delete form.dataset.busy;buttons.forEach((b)=>{b.disabled=false})}
+finally{delete form.dataset.busy;buttons.forEach((b)=>{b.disabled=false});fields.forEach((f)=>{f.readOnly=false})}
 });`;
 
 const PLUS = '<svg class="plus" width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
@@ -555,6 +557,7 @@ button{display:block;width:100%;min-height:50px;margin:1rem 0 0;padding:0 1.2rem
 font-weight:600;color:var(--accent-ink);background:var(--accent);border:0;border-radius:12px;cursor:pointer}
 @media(min-width:34rem){button{width:auto;min-width:11rem}}
 button.filer-done{color:var(--ink);background:var(--fill)}
+button.filer-done[hidden]{display:none}
 button.verdict{width:auto;min-width:0;margin:0;padding:0 .5rem;font-size:16px;color:var(--ink);background:var(--fill);white-space:nowrap}
 button.verdict.approved{color:var(--accent-ink);background:var(--accent)}
 /* The answer already saved, ringed in ink: a state, where the accent is an identity. */
