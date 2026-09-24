@@ -1,6 +1,6 @@
 {
   "name": "@cmgmyr/lookover",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "A manual-testing queue for agent crews and one human tester.",
   "license": "MIT",
   "author": "Chris Gmyr",
