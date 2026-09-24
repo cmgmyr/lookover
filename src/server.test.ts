@@ -66,7 +66,7 @@ test('serves redirects, project pages, all pages and counts', async (t) => {
   assert.doesNotMatch(projectHtml, /class="project-badge">/);
   assert.match(allHtml, /<form data-project-name="App" style="[^"]*" class="card" id="item-\d+"/);
   assert.doesNotMatch(projectHtml, /data-project-name/);
-  assert.match(projectHtml, /<button class="filer-done" type="button" hidden>Done<\/button>/);
+  assert.match(projectHtml, /<div class="filer-actions"><button type="submit">Send to the agent<\/button><button class="filer-done" type="button" hidden>Done<\/button><\/div><\/form>/);
   assert.deepEqual(await (await get(`${base}/api/counts?project=app`)).json(), { open: 2, feedback: 0, processed: 0 });
   assert.equal(item.status, 'open');
   await new Promise<void>((resolve) => server.close(() => resolve()));

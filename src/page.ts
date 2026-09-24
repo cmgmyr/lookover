@@ -45,7 +45,7 @@ export function renderPage(view: PageView): string {
   const pollToken = view.token === undefined ? '' : `&t=${encodeURIComponent(view.token)}`;
   const newSection = view.projects.length === 0
     ? '<section><p class="empty">No projects registered. Run <code>lookover init --name &lt;name&gt;</code> first.</p></section>'
-    : `<section><details class="fold filer"><summary>Found something else?${CHEVRON}</summary><form class="card" method="post" enctype="multipart/form-data" action="/items/new${token}">${currentProject === undefined ? projectOptions : `<input type="hidden" name="project" value="${escapeHtml(currentProject?.slug ?? '')}">`}${tokenValue}${viewValue}<label for="new-title">Title</label><input id="new-title" name="title" required maxlength="200" placeholder="Short name for what you found"><label for="new-body">What you saw</label><textarea id="new-body" name="body" placeholder="Where you were, what happened, what you expected."></textarea>${photoInput('new-photo')}<button type="submit">Send to the agent</button><button class="filer-done" type="button" hidden>Done</button></form></details></section>`;
+    : `<section><details class="fold filer"><summary>Found something else?${CHEVRON}</summary><form class="card" method="post" enctype="multipart/form-data" action="/items/new${token}">${currentProject === undefined ? projectOptions : `<input type="hidden" name="project" value="${escapeHtml(currentProject?.slug ?? '')}">`}${tokenValue}${viewValue}<label for="new-title">Title</label><input id="new-title" name="title" required maxlength="200" placeholder="Short name for what you found"><label for="new-body">What you saw</label><textarea id="new-body" name="body" placeholder="Where you were, what happened, what you expected."></textarea>${photoInput('new-photo')}<div class="filer-actions"><button type="submit">Send to the agent</button><button class="filer-done" type="button" hidden>Done</button></div></form></details></section>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtml(titleText)}</title>${favicon(accent)}<style>${themeVars(accent)}${STYLE}</style></head><body><main>
 <header>${wordmark()}<h1>${escapeHtml(title)}</h1>${currentProject === undefined ? projectsSubline(view) : `<p class="sub">${escapeHtml(placeLine(currentProject.root))}</p>`}</header>
 <nav aria-label="Projects" class="picker">${picker}</nav>
@@ -558,6 +558,10 @@ font-weight:600;color:var(--accent-ink);background:var(--accent);border:0;border
 @media(min-width:34rem){button{width:auto;min-width:11rem}}
 button.filer-done{color:var(--ink);background:var(--fill)}
 button.filer-done[hidden]{display:none}
+.filer-actions{display:flex;gap:.75rem;align-items:center;margin-top:1rem}
+.filer-actions button{width:auto;min-width:0;margin:0}
+.filer-actions button[type=submit]{flex:1}
+@media(min-width:34rem){.filer-actions button[type=submit]{flex:none;min-width:11rem}.filer-actions button.filer-done{margin-left:auto}}
 button.verdict{width:auto;min-width:0;margin:0;padding:0 .5rem;font-size:16px;color:var(--ink);background:var(--fill);white-space:nowrap}
 button.verdict.approved{color:var(--accent-ink);background:var(--accent)}
 /* The answer already saved, ringed in ink: a state, where the accent is an identity. */
