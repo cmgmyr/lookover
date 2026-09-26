@@ -1771,3 +1771,13 @@ test('every form keeps method, action and multipart encoding so the page works w
   assert.match(html, /\.toast\{position:fixed;[^}]*background:var\(--ink\);color:var\(--cell\)/);
   assert.match(html, /\.card\.settle\{animation:settle/);
 });
+
+test('the toast is pinned to the top of the viewport', async (t) => {
+  const { store, project, server } = scratch(t);
+  const base = await listen(server);
+
+  const html = await (await get(`${base}/p/${project.slug}`)).text();
+
+  assert.match(html, /\.toast\{position:fixed;[^}]*top:calc\(.75rem \+ env\(safe-area-inset-top\)\)/);
+  assert.doesNotMatch(html, /\.toast\{[^}]*bottom:/);
+});
