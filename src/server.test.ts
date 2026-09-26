@@ -920,13 +920,19 @@ function noteFixture(t: { after: (fn: () => Promise<void>) => void }) {
   return { store, project, ready };
 }
 
+function cardHtml(html: string, id: number): string {
+  const start = html.indexOf(`id="item-${id}"`);
+  return html.slice(start, html.indexOf('</form>', start));
+}
+
 test('a filed waiting card shows the Found badge and a single Save button, no Approved or Needs work', async (t) => {
   const { store, project, ready } = noteFixture(t);
   const filed = store.addItem({ projectId: project.id, title: 'Filed card', source: 'chris', status: 'feedback', verdict: 'note', feedback: 'the header clips' });
+  const neighbour = store.addItem({ projectId: project.id, title: 'Agent card' });
+  store.saveFeedback(neighbour.id, { verdict: 'needs-work', feedback: 'the footer jumps' });
   const base = await ready;
 
-  const html = await (await get(`${base}/p/app`)).text();
-  const card = html.slice(html.indexOf(`id="item-${filed.id}"`));
+  const card = cardHtml(await (await get(`${base}/p/app`)).text(), filed.id);
   assert.match(card, /<span class="badge note">Found<\/span>/);
   assert.doesNotMatch(card, />Note</);
   assert.equal((card.match(/<button class="verdict /g) ?? []).length, 1);
@@ -938,14 +944,48 @@ test('a waiting agent card answered needs-work still offers both Approved and Ne
   const { store, project, ready } = noteFixture(t);
   const answered = store.addItem({ projectId: project.id, title: 'Agent card' });
   store.saveFeedback(answered.id, { verdict: 'needs-work', feedback: 'the footer jumps' });
+  const filed = store.addItem({ projectId: project.id, title: 'Filed card', source: 'chris', status: 'feedback', verdict: 'note', feedback: 'the header clips' });
   const base = await ready;
 
-  const html = await (await get(`${base}/p/app`)).text();
-  const card = html.slice(html.indexOf(`id="item-${answered.id}"`));
+  const card = cardHtml(await (await get(`${base}/p/app`)).text(), answered.id);
+  assert.notEqual(filed.id, answered.id);
   assert.equal((card.match(/<button class="verdict /g) ?? []).length, 2);
   assert.match(card, /value="approved"/);
   assert.match(card, /value="needs-work"/);
   assert.doesNotMatch(card, /value="note"/);
+});
+
+test('a waiting agent card carrying note keeps Approved and Needs work and the Note badge', async (t) => {
+  const { store, project, ready } = noteFixture(t);
+  const agent = store.addItem({ projectId: project.id, title: 'Agent card', source: 'lead todo-801 PR #148' });
+  store.saveFeedback(agent.id, { verdict: 'note', feedback: 'just a thought' });
+  const base = await ready;
+
+  const card = cardHtml(await (await get(`${base}/p/app`)).text(), agent.id);
+  assert.match(card, /<span class="badge note">Note<\/span>/);
+  assert.doesNotMatch(card, />Found</);
+  assert.equal((card.match(/<button class="verdict /g) ?? []).length, 2);
+  assert.match(card, /value="approved"/);
+  assert.match(card, /value="needs-work"/);
+  assert.doesNotMatch(card, /value="note"/);
+});
+
+test('Processed history reads Found for a processed filed card and Note for a processed agent card, both stored note', async (t) => {
+  const { store, project, ready } = noteFixture(t);
+  const filed = store.addItem({ projectId: project.id, title: 'Filed card', source: 'chris', status: 'feedback', verdict: 'note', feedback: 'the header clips' });
+  const agent = store.addItem({ projectId: project.id, title: 'Agent card', source: 'todo 547' });
+  store.saveFeedback(agent.id, { verdict: 'note', feedback: 'just a thought' });
+  store.processItem(filed.id, 'triaged');
+  store.processItem(agent.id, 'recorded');
+  const base = await ready;
+
+  const html = await (await get(`${base}/p/app`)).text();
+  const badge = (id: number): string => {
+    const start = html.indexOf(`<div class="done" id="item-${id}">`);
+    return html.slice(start, html.indexOf('</span>', start) + 7);
+  };
+  assert.match(badge(filed.id), /<span class="badge note">Found<\/span>/);
+  assert.match(badge(agent.id), /<span class="badge note">Note<\/span>/);
 });
 
 test('saving a filed card with verdict note updates its text, keeps verdict note, and refuses empty text', async (t) => {

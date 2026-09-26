@@ -13,7 +13,7 @@ import {
   type MultipartFile,
 } from './multipart.ts';
 import { withProjectSlug, type ItemWithProject } from './commands/render.ts';
-import { renderCard, renderPage } from './page.ts';
+import { FILED_SOURCE, renderCard, renderPage } from './page.ts';
 import type { Counts, FileSide, Item, Store, Verdict } from './store.ts';
 
 export interface ServerOptions {
@@ -133,7 +133,7 @@ async function handleRequest(store: Store, options: ServerOptions, request: Inco
         return;
       }
       const photos = preparePhotos(form);
-      const item = store.addItem({ projectId: project.id, title, details: '', source: 'chris', status: 'feedback', verdict: 'note', feedback: body });
+      const item = store.addItem({ projectId: project.id, title, details: '', source: FILED_SOURCE, status: 'feedback', verdict: 'note', feedback: body });
       attach(store, options, project.slug, item.id, 'feedback', photos);
       saved(store, options, request, response, form, item.id, project.slug);
       return;
