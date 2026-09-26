@@ -30,7 +30,7 @@ lookover feedback --json
 
 Hive can carry the open count from `lookover open --count` in a board pad line, but Hive is not required.
 
-Read each verdict and feedback. An `approved` card is accepted. A `note` card is information to record. A `needs-work` card requires a fix and a new retest card after the fix lands. A card's `files` array lists the tester's photos with absolute paths; open them before you act on the verdict.
+Read each verdict and feedback. An `approved` card is accepted. A `note` card is a finding the tester filed from the page (the page shows it as Found): treat it as new work to triage, then process it with a note naming the todo, fix, or decision. A `needs-work` card requires a fix and a new retest card after the fix lands. A card's `files` array lists the tester's photos with absolute paths; open them before you act on the verdict.
 
 ## After processing feedback
 
