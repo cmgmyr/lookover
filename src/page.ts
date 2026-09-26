@@ -53,7 +53,7 @@ export function renderPage(view: PageView): string {
 ${newSection}
 <section><h2 data-section="open">Awaiting your test<span class="n">${view.open.length}</span></h2>${view.open.length === 0 ? `<p class="empty">${doneMark()}Nothing to test. A real and good state.</p>` : grouped(view, view.open).map((item) => renderCard(view, item, false)).join('')}</section>
 <section><h2 data-section="feedback">Waiting for the agent<span class="n">${view.waiting.length}</span></h2>${view.waiting.length === 0 ? '<p class="none">Nothing saved yet.</p>' : grouped(view, view.waiting).map((item) => renderCard(view, item, true)).join('')}</section>
-<section><h2>Processed<span class="n">${view.done.length}</span></h2>${view.done.length === 0 ? '<p class="none">Nothing processed yet.</p>' : `<details class="fold history"><summary>Show history${CHEVRON}</summary>${grouped(view, view.done).map((item) => `<div class="done" id="item-${item.id}"><strong>${escapeHtml(item.title)}</strong> <span class="badge ${escapeHtml(item.verdict ?? 'note')}">${escapeHtml(verdictLabel(item.verdict))}</span><div class="meta">${escapeHtml(item.processed_at ?? '')}${item.processed_note ? ` · ${escapeHtml(item.processed_note)}` : ''}</div></div>`).join('')}</details>`}</section>
+<section><h2>Processed<span class="n">${view.done.length}</span></h2>${view.done.length === 0 ? '<p class="none">Nothing processed yet.</p>' : `<details class="fold history"><summary>Show history${CHEVRON}</summary>${grouped(view, view.done).map((item) => `<div class="done" id="item-${item.id}"><strong>${escapeHtml(item.title)}</strong> <span class="badge ${escapeHtml(item.verdict ?? 'note')}">${escapeHtml(itemLabel(item))}</span><div class="meta">${escapeHtml(item.processed_at ?? '')}${item.processed_note ? ` · ${escapeHtml(item.processed_note)}` : ''}</div></div>`).join('')}</details>`}</section>
 </main><div id="toast" class="toast" role="status"></div>${pollScript(projectQuery, pollToken, view.open.length, baseTitleText)}</body></html>`;
 }
 
@@ -266,8 +266,13 @@ function card(item: Item, token: string, tokenValue: string, waiting: boolean, r
   const strip = shots(files?.get(item.id) ?? [], waiting ? 'feedback' : 'card', token);
   // The buttons come last because each one sends the form: you write, then
   // the verdict you tap submits what you wrote.
-  const answer = `<textarea name="feedback" required placeholder="What you saw, what felt wrong, what to change.">${waiting ? escapeHtml(item.feedback ?? '') : ''}</textarea>${photoInput(`photo-${item.id}`)}${tokenValue}<div class="verdict-row">${ANSWERS.map((value) => `<button class="verdict ${value}${waiting && value === (item.verdict ?? 'note') ? ' selected' : ''}" type="submit" name="verdict" value="${value}"${value === 'approved' ? ' formnovalidate' : ''}>${escapeHtml(verdictLabel(value))}</button>`).join('')}</div>`;
-  const chips = `${priority}${projectBadge}${waiting ? `<span class="badge ${escapeHtml(item.verdict ?? 'note')}">${escapeHtml(verdictLabel(item.verdict ?? 'note'))}</span>` : ''}`;
+  // Only a card you filed is your own finding; Approved and Needs work mean nothing on it.
+  const filed = waiting && item.source === FILED_SOURCE && (item.verdict ?? 'note') === 'note';
+  const verdicts = filed
+    ? '<button class="verdict note" type="submit" name="verdict" value="note">Save</button>'
+    : ANSWERS.map((value) => `<button class="verdict ${value}${waiting && value === (item.verdict ?? 'note') ? ' selected' : ''}" type="submit" name="verdict" value="${value}"${value === 'approved' ? ' formnovalidate' : ''}>${escapeHtml(verdictLabel(value))}</button>`).join('');
+  const answer = `<textarea name="feedback" required placeholder="What you saw, what felt wrong, what to change.">${waiting ? escapeHtml(item.feedback ?? '') : ''}</textarea>${photoInput(`photo-${item.id}`)}${tokenValue}<div class="verdict-row">${verdicts}</div>`;
+  const chips = `${priority}${projectBadge}${waiting ? `<span class="badge ${escapeHtml(item.verdict ?? 'note')}">${escapeHtml(itemLabel(item))}</span>` : ''}`;
   // Above the title, not inside it: inline chips made the title wrap around
   // them and the project badge land mid-sentence.
   const tags = chips === '' ? '' : `<p class="tags">${chips}</p>`;
@@ -303,15 +308,22 @@ function shots(files: FileRow[], side: FileSide, token: string): string {
   return `<div class="shots">${images}</div>`;
 }
 
+/** The source the Found something else form files under; it is what tells your cards from an agent's. */
+export const FILED_SOURCE = 'chris';
+
 /**
- * The two verdicts a card offers. Note stays a stored verdict (filed cards are
- * born with it, and history and badges still show it) but is not a button:
- * every note left on an agent's card was a needs-work or an approval.
+ * The two verdicts an agent's card offers. Cards you file carry the stored
+ * verdict note, shown as Found; their edit row is a single Save button. An
+ * agent's card that carries note keeps the label Note.
  */
 const ANSWERS = ['approved', 'needs-work'] as const;
 
 function verdictLabel(value: string | null): string {
   return value === 'needs-work' ? 'Needs work' : value === 'approved' ? 'Approved' : 'Note';
+}
+
+function itemLabel(item: Item): string {
+  return item.source === FILED_SOURCE && (item.verdict ?? 'note') === 'note' ? 'Found' : verdictLabel(item.verdict);
 }
 
 function isWebUrl(value: string): boolean {

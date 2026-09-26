@@ -910,24 +910,97 @@ test('cards render two verdict submit buttons and no note button, required feedb
   assert.match(html, /<button class="verdict needs-work selected" type="submit" name="verdict" value="needs-work">Needs work<\/button>/);
 });
 
-test('a note verdict still posts, and its waiting card keeps the Note badge with only two buttons in the fold', async (t) => {
+function noteFixture(t: { after: (fn: () => Promise<void>) => void }) {
   const dir = mkdtempSync(join(tmpdir(), 'lookover-server-'));
   const store = openStore(join(dir, 'queue.sqlite'));
   const project = store.registerProject({ slug: 'app', name: 'App', identity: `${dir}/.git`, identity_kind: 'git', root: '/repos/app', accent: '#336699' });
-  const item = store.addItem({ projectId: project.id, title: 'Noted card' });
   const server = createServer(store);
-  const base = await listen(server);
+  const ready = listen(server);
   t.after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+  return { store, project, ready };
+}
 
-  const saved = await get(`${base}/items/${item.id}/feedback`, { method: 'POST', body: new URLSearchParams({ verdict: 'note', feedback: 'just a thought' }), redirect: 'manual' });
-  assert.equal(saved.status, 303);
-  assert.equal(store.getItem(item.id)?.verdict, 'note');
+function cardHtml(html: string, id: number): string {
+  const start = html.indexOf(`id="item-${id}"`);
+  return html.slice(start, html.indexOf('</form>', start));
+}
+
+test('a filed waiting card shows the Found badge and a single Save button, no Approved or Needs work', async (t) => {
+  const { store, project, ready } = noteFixture(t);
+  const filed = store.addItem({ projectId: project.id, title: 'Filed card', source: 'chris', status: 'feedback', verdict: 'note', feedback: 'the header clips' });
+  const neighbour = store.addItem({ projectId: project.id, title: 'Agent card' });
+  store.saveFeedback(neighbour.id, { verdict: 'needs-work', feedback: 'the footer jumps' });
+  const base = await ready;
+
+  const card = cardHtml(await (await get(`${base}/p/app`)).text(), filed.id);
+  assert.match(card, /<span class="badge note">Found<\/span>/);
+  assert.doesNotMatch(card, />Note</);
+  assert.equal((card.match(/<button class="verdict /g) ?? []).length, 1);
+  assert.match(card, /<button class="verdict note" type="submit" name="verdict" value="note">Save<\/button>/);
+  assert.doesNotMatch(card, /value="approved"|value="needs-work"/);
+});
+
+test('a waiting agent card answered needs-work still offers both Approved and Needs work', async (t) => {
+  const { store, project, ready } = noteFixture(t);
+  const answered = store.addItem({ projectId: project.id, title: 'Agent card' });
+  store.saveFeedback(answered.id, { verdict: 'needs-work', feedback: 'the footer jumps' });
+  const filed = store.addItem({ projectId: project.id, title: 'Filed card', source: 'chris', status: 'feedback', verdict: 'note', feedback: 'the header clips' });
+  const base = await ready;
+
+  const card = cardHtml(await (await get(`${base}/p/app`)).text(), answered.id);
+  assert.notEqual(filed.id, answered.id);
+  assert.equal((card.match(/<button class="verdict /g) ?? []).length, 2);
+  assert.match(card, /value="approved"/);
+  assert.match(card, /value="needs-work"/);
+  assert.doesNotMatch(card, /value="note"/);
+});
+
+test('a waiting agent card carrying note keeps Approved and Needs work and the Note badge', async (t) => {
+  const { store, project, ready } = noteFixture(t);
+  const agent = store.addItem({ projectId: project.id, title: 'Agent card', source: 'lead todo-801 PR #148' });
+  store.saveFeedback(agent.id, { verdict: 'note', feedback: 'just a thought' });
+  const base = await ready;
+
+  const card = cardHtml(await (await get(`${base}/p/app`)).text(), agent.id);
+  assert.match(card, /<span class="badge note">Note<\/span>/);
+  assert.doesNotMatch(card, />Found</);
+  assert.equal((card.match(/<button class="verdict /g) ?? []).length, 2);
+  assert.match(card, /value="approved"/);
+  assert.match(card, /value="needs-work"/);
+  assert.doesNotMatch(card, /value="note"/);
+});
+
+test('Processed history reads Found for a processed filed card and Note for a processed agent card, both stored note', async (t) => {
+  const { store, project, ready } = noteFixture(t);
+  const filed = store.addItem({ projectId: project.id, title: 'Filed card', source: 'chris', status: 'feedback', verdict: 'note', feedback: 'the header clips' });
+  const agent = store.addItem({ projectId: project.id, title: 'Agent card', source: 'todo 547' });
+  store.saveFeedback(agent.id, { verdict: 'note', feedback: 'just a thought' });
+  store.processItem(filed.id, 'triaged');
+  store.processItem(agent.id, 'recorded');
+  const base = await ready;
 
   const html = await (await get(`${base}/p/app`)).text();
-  const card = html.slice(html.indexOf(`id="item-${item.id}"`));
-  assert.match(card, /<span class="badge note">Note<\/span>/);
-  assert.equal((card.match(/<button class="verdict /g) ?? []).length, 2);
-  assert.doesNotMatch(card, /selected"/);
+  const badge = (id: number): string => {
+    const start = html.indexOf(`<div class="done" id="item-${id}">`);
+    return html.slice(start, html.indexOf('</span>', start) + 7);
+  };
+  assert.match(badge(filed.id), /<span class="badge note">Found<\/span>/);
+  assert.match(badge(agent.id), /<span class="badge note">Note<\/span>/);
+});
+
+test('saving a filed card with verdict note updates its text, keeps verdict note, and refuses empty text', async (t) => {
+  const { store, project, ready } = noteFixture(t);
+  const filed = store.addItem({ projectId: project.id, title: 'Filed card', source: 'chris', status: 'feedback', verdict: 'note', feedback: 'first words' });
+  const base = await ready;
+
+  const saved = await get(`${base}/items/${filed.id}/feedback`, { method: 'POST', body: new URLSearchParams({ verdict: 'note', feedback: 'second words' }), redirect: 'manual' });
+  assert.equal(saved.status, 303);
+  assert.equal(store.getItem(filed.id)?.verdict, 'note');
+  assert.equal(store.getItem(filed.id)?.feedback, 'second words');
+
+  const empty = await get(`${base}/items/${filed.id}/feedback`, { method: 'POST', body: new URLSearchParams({ verdict: 'note', feedback: '  ' }), redirect: 'manual' });
+  assert.equal(empty.status, 400);
+  assert.equal(store.getItem(filed.id)?.feedback, 'second words');
 });
 
 test('approved keeps the accent while waiting buttons mark the saved verdict', async (t) => {
