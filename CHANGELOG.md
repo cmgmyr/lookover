@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.3.1 - 2026-09-26
+
+- Changed the toast to show at the top of the screen instead of the bottom, where it was easy to miss.
+- Changed cards you file from Found something else? to show a Found badge, with a single Save button when you change your answer.
+- Changed the skill to tell agents that a card you file is a new finding to triage.
+
 ## 0.3.0 - 2026-09-23
 
 - Changed the Found something else? form to stay open after a send, cleared with the cursor in Title, so you can file several cards in a row.
