@@ -266,7 +266,12 @@ function card(item: Item, token: string, tokenValue: string, waiting: boolean, r
   const strip = shots(files?.get(item.id) ?? [], waiting ? 'feedback' : 'card', token);
   // The buttons come last because each one sends the form: you write, then
   // the verdict you tap submits what you wrote.
-  const answer = `<textarea name="feedback" required placeholder="What you saw, what felt wrong, what to change.">${waiting ? escapeHtml(item.feedback ?? '') : ''}</textarea>${photoInput(`photo-${item.id}`)}${tokenValue}<div class="verdict-row">${ANSWERS.map((value) => `<button class="verdict ${value}${waiting && value === (item.verdict ?? 'note') ? ' selected' : ''}" type="submit" name="verdict" value="${value}"${value === 'approved' ? ' formnovalidate' : ''}>${escapeHtml(verdictLabel(value))}</button>`).join('')}</div>`;
+  // A filed card is your own finding, so Approved and Needs work mean nothing on it.
+  const filed = waiting && (item.verdict ?? 'note') === 'note';
+  const verdicts = filed
+    ? '<button class="verdict note" type="submit" name="verdict" value="note">Save</button>'
+    : ANSWERS.map((value) => `<button class="verdict ${value}${waiting && value === (item.verdict ?? 'note') ? ' selected' : ''}" type="submit" name="verdict" value="${value}"${value === 'approved' ? ' formnovalidate' : ''}>${escapeHtml(verdictLabel(value))}</button>`).join('');
+  const answer = `<textarea name="feedback" required placeholder="What you saw, what felt wrong, what to change.">${waiting ? escapeHtml(item.feedback ?? '') : ''}</textarea>${photoInput(`photo-${item.id}`)}${tokenValue}<div class="verdict-row">${verdicts}</div>`;
   const chips = `${priority}${projectBadge}${waiting ? `<span class="badge ${escapeHtml(item.verdict ?? 'note')}">${escapeHtml(verdictLabel(item.verdict ?? 'note'))}</span>` : ''}`;
   // Above the title, not inside it: inline chips made the title wrap around
   // them and the project badge land mid-sentence.
@@ -304,14 +309,13 @@ function shots(files: FileRow[], side: FileSide, token: string): string {
 }
 
 /**
- * The two verdicts a card offers. Note stays a stored verdict (filed cards are
- * born with it, and history and badges still show it) but is not a button:
- * every note left on an agent's card was a needs-work or an approval.
+ * The two verdicts an agent's card offers. Cards you file carry the stored
+ * verdict note, shown as Found; their edit row is a single Save button.
  */
 const ANSWERS = ['approved', 'needs-work'] as const;
 
 function verdictLabel(value: string | null): string {
-  return value === 'needs-work' ? 'Needs work' : value === 'approved' ? 'Approved' : 'Note';
+  return value === 'needs-work' ? 'Needs work' : value === 'approved' ? 'Approved' : 'Found';
 }
 
 function isWebUrl(value: string): boolean {
