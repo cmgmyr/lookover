@@ -573,7 +573,7 @@ background:var(--cell);border-radius:12px;color:var(--ink-soft);font-size:15px;t
    "Nothing to test" line earns a panel: it is the one that is good news. */
 .none{margin:0;padding:.1rem 0;color:var(--ink-soft);font-size:15px}
 .empty code{font-family:var(--mono);font-size:.88em}
-.toast{position:fixed;left:50%;bottom:calc(4.5rem + env(safe-area-inset-bottom));z-index:10;transform:translateX(-50%);
+.toast{position:fixed;left:50%;top:calc(.75rem + env(safe-area-inset-top));z-index:10;transform:translateX(-50%);
 max-width:min(26rem,calc(100vw - 2rem));padding:.7rem 1.1rem;border-radius:12px;background:var(--ink);color:var(--cell);
 font-size:15px;font-weight:600;line-height:1.3;text-align:center;opacity:0;pointer-events:none}
 .toast.show{opacity:1}
@@ -587,7 +587,7 @@ button:active,.shots a:active{transform:scale(.97)}
 .chev{transition:transform 150ms var(--ease)}
 .fold[open]>summary~*{animation:open 150ms var(--ease)}
 .new-count:not([hidden]){animation:drop 180ms var(--ease)}
-.toast{transform:translate(-50%,8px);transition:opacity 180ms var(--ease),transform 180ms var(--ease)}
+.toast{transform:translate(-50%,-8px);transition:opacity 180ms var(--ease),transform 180ms var(--ease)}
 .toast.show{transform:translate(-50%,0)}
 /* With no script a save redirects onto the card in its new section; it settles in. */
 .card:target{animation:settle 180ms var(--ease)}
