@@ -1099,7 +1099,7 @@ test('prune without --yes lists each card and the total, and deletes nothing', (
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, new RegExp(`^#${old.id} novel-hood Old card: 2 images, 2\\.0 MB\\n`));
-  assert.match(result.stdout, /2 images, 2\.0 MB on 1 cards; run with --yes to remove them\n$/);
+  assert.match(result.stdout, /2 images, 2\.0 MB on 1 card; run with --yes to remove them\n$/);
   assert.equal(fileRows(box), 2);
   assert.ok(existsSync(join(box.home, 'files', old.paths[0] as string)));
 });
@@ -1112,7 +1112,7 @@ test('prune --yes removes files and rows, a second run has nothing to prune', (t
   const result = run(box, ['prune', '--yes']);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'removed 2 images (2.0 MB) from 1 cards\n');
+  assert.equal(result.stdout, 'removed 2 images (2.0 MB) from 1 card\n');
   assert.equal(existsSync(join(box.home, 'files', old.paths[0] as string)), false);
   assert.ok(existsSync(join(box.home, 'files', recent.paths[0] as string)));
   assert.equal(fileRows(box), 2);
@@ -1131,6 +1131,24 @@ test('prune --yes tolerates a file that is already gone', (t) => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fileRows(box), 0);
+});
+
+test('prune --yes counts only files it removed, names the ones it could not, exits 1, and the rows are gone', (t) => {
+  const box = registered(t);
+  const old = prunableCard(box, 'Old card', 40, 2);
+  const stuck = join(box.home, 'files', old.paths[0] as string);
+  rmSync(stuck);
+  mkdirSync(stuck);
+  writeFileSync(join(stuck, 'child'), 'x');
+
+  const result = run(box, ['prune', '--yes']);
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, `could not remove ${old.paths[0]}; the row is gone, delete the file by hand\n`);
+  assert.equal(result.stdout, 'removed 1 image (1.0 MB) from 1 card\n');
+  assert.equal(fileRows(box), 0);
+  assert.equal(existsSync(join(box.home, 'files', old.paths[1] as string)), false);
+  assert.ok(existsSync(stuck));
 });
 
 test('prune skips a card whose stored path leaves files/ and never touches the file outside', (t) => {
@@ -1153,7 +1171,9 @@ test('prune --older-than moves the cutoff and a bad value is an error naming it'
   prunableCard(box, 'Card', 10);
 
   assert.match(run(box, ['prune']).stdout, /nothing to prune \(cards processed more than 30 days/);
-  assert.match(run(box, ['prune', '--older-than', '5d']).stdout, /2 images, 2\.0 MB on 1 cards/);
+  assert.match(run(box, ['prune', '--older-than=1d']).stdout, /on 1 card;/);
+  assert.equal(run(registered(t), ['prune', '--older-than=1d']).stdout, 'nothing to prune (cards processed more than 1 day ago with images)\n');
+  assert.match(run(box, ['prune', '--older-than', '5d']).stdout, /2 images, 2\.0 MB on 1 card;/);
 
   for (const bad of ['30', '0d', 'x', '-5d', '1.5d']) {
     const result = run(box, ['prune', `--older-than=${bad}`]);
@@ -1181,9 +1201,9 @@ test('prune scopes like feedback: the current project by default, every project 
   db.prepare("UPDATE items SET status = 'processed', processed_at = datetime('now', '-40 days') WHERE id = ?").run(id);
   db.close();
 
-  assert.match(run(box, ['prune']).stdout, /on 1 cards/);
-  assert.match(run(box, ['prune', '--project', 'other']).stdout, /#\d+ other Theirs: 1 images/);
-  assert.match(run(box, ['prune', '--all']).stdout, /on 2 cards/);
+  assert.match(run(box, ['prune']).stdout, /on 1 card;/);
+  assert.match(run(box, ['prune', '--project', 'other']).stdout, /#\d+ other Theirs: 1 image,/);
+  assert.match(run(box, ['prune', '--all']).stdout, /on 2 cards;/);
   assert.equal(run(box, ['prune', '--all', '--project', 'other']).status, 1);
 });
 

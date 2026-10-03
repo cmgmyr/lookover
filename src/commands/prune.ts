@@ -36,18 +36,18 @@ export function runPrune(argv: string[]): number {
     });
 
     if (cards.length === 0) {
-      process.stdout.write(`nothing to prune (cards processed more than ${days} days ago with images)\n`);
+      process.stdout.write(`nothing to prune (cards processed more than ${count(days, 'day')} ago with images)\n`);
       return 0;
     }
 
     if (values.yes !== true) {
       for (const card of cards) {
         const label = `#${card.id} ${slugs.get(card.project_id) ?? '?'} ${card.title}`;
-        process.stdout.write(`${label}: ${card.files.length} images, ${mb(sum(card.files))} MB\n`);
+        process.stdout.write(`${label}: ${count(card.files.length, 'image')}, ${mb(sum(card.files))} MB\n`);
       }
       const all = cards.flatMap((card) => card.files);
       process.stdout.write(
-        `${all.length} images, ${mb(sum(all))} MB on ${cards.length} cards; run with --yes to remove them\n`,
+        `${count(all.length, 'image')}, ${mb(sum(all))} MB on ${count(cards.length, 'card')}; run with --yes to remove them\n`,
       );
       return 0;
     }
@@ -56,29 +56,31 @@ export function runPrune(argv: string[]): number {
       cards.map((card) => card.id),
       days,
     );
-    const touched = new Set(removed.map((file) => file.item_id));
 
     // Rows are gone and committed; only now do the files go. A failure here
     // leaves an orphan file, never a row pointing at nothing.
-    let failed = false;
+    const gone: FileRow[] = [];
     for (const file of removed) {
       try {
         unlinkSync(storedPath(home, file.path));
+        gone.push(file);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          process.stderr.write(`could not remove ${file.path}: ${(error as Error).message}\n`);
-          failed = true;
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          gone.push(file);
+        } else {
+          process.stderr.write(`could not remove ${file.path}; the row is gone, delete the file by hand\n`);
         }
       }
     }
 
     if (removed.length === 0) {
-      process.stdout.write(`nothing to prune (cards processed more than ${days} days ago with images)\n`);
-      return failed ? 1 : 0;
+      process.stdout.write(`nothing to prune (cards processed more than ${count(days, 'day')} ago with images)\n`);
+      return 0;
     }
 
-    process.stdout.write(`removed ${removed.length} images (${mb(sum(removed))} MB) from ${touched.size} cards\n`);
-    return failed ? 1 : 0;
+    const touched = new Set(gone.map((file) => file.item_id));
+    process.stdout.write(`removed ${count(gone.length, 'image')} (${mb(sum(gone))} MB) from ${count(touched.size, 'card')}\n`);
+    return gone.length === removed.length ? 0 : 1;
   });
 }
 
@@ -106,6 +108,10 @@ function insideFiles(home: string, file: FileRow): boolean {
 
 function sum(files: readonly FileRow[]): number {
   return files.reduce((total, file) => total + file.size, 0);
+}
+
+function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
 
 function mb(bytes: number): string {
