@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.4.0 - 2026-10-03
+
+- Changed a card with several images to show a peek of the next one and an "N images" count, so you can tell there is more than one.
+- Changed an answered card to keep the agent's images, with your photos after them.
+- Added a lightbox: tap an image to see it large, then swipe or use the arrow keys to move through that card's images, and press Esc or tap outside to close.
+- Added `lookover prune`, which lists the images on cards processed more than 30 days ago and removes them with `--yes`. The page shows a quiet line when there are any.
+- Fixed a project name breaking mid-word in the project row on a 320px screen.
+
 ## 0.3.1 - 2026-09-26
 
 - Changed the toast to show at the top of the screen instead of the bottom, where it was easy to miss.
