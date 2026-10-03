@@ -474,6 +474,7 @@ min-height:44px;padding:.3rem .15rem;border-radius:8px;color:var(--ink);text-dec
 font-weight:500;text-align:center;overflow-wrap:break-word;hyphens:auto}
 .tile .t::before{content:"";display:block;width:7px;height:7px;margin:0 auto 2px;border-radius:50%;background:var(--bl)}
 .tiles:has(.tile:nth-child(5)) .tile{font-size:12px}
+@media(max-width:22.5rem){.tile{font-size:12px}}
 .tile.all .t::before{display:none}
 .tile .n{font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
 .tile.selected{background:var(--raised);box-shadow:var(--lift)}
