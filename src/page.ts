@@ -309,7 +309,7 @@ function shots(files: FileRow[], token: string): string {
   const own = [...files.filter((file) => file.side === 'card'), ...files.filter((file) => file.side === 'feedback')];
   if (own.length === 0) return '';
   const images = own.map((file) => `<a href="/files/${file.id}${token}"><img src="/files/${file.id}${token}" alt="${escapeHtml(file.name)}" loading="lazy"></a>`).join('');
-  return `<div class="shots">${images}</div>${own.length > 1 ? `<p class="shots-count">${own.length} images</p>` : ''}`;
+  return `<div class="shots${own.length > 1 ? ' multi' : ''}">${images}</div>${own.length > 1 ? `<p class="shots-count">${own.length} images</p>` : ''}`;
 }
 
 /** The source the Found something else form files under; it is what tells your cards from an agent's. */
@@ -364,12 +364,13 @@ const lb=document.querySelector('dialog.lightbox');
 if(lb){const row=lb.querySelector('.lb-row'),label=lb.querySelector('.lb-label'),prev=lb.querySelector('.lb-prev'),next=lb.querySelector('.lb-next');
 const count=()=>row.children.length;
 const index=()=>row.clientWidth?Math.round(row.scrollLeft/row.clientWidth):0;
-const sync=()=>{const i=index(),n=count();label.textContent=(i+1)+' of '+n;prev.hidden=i<=0;next.hidden=i>=n-1};
+const close=lb.querySelector('.lb-close');
+const sync=()=>{const i=index(),n=count(),was=document.activeElement;label.textContent=(i+1)+' of '+n;prev.hidden=i<=0;next.hidden=i>=n-1;if((was===prev&&prev.hidden)||(was===next&&next.hidden)){const other=was===prev?next:prev;(other.hidden?close:other).focus()}};
 const go=(i)=>{const n=Math.max(0,Math.min(count()-1,i));row.scrollTo({left:n*row.clientWidth,behavior:matchMedia('(prefers-reduced-motion:no-preference)').matches?'smooth':'auto'})};
 row.addEventListener('scroll',sync);
 prev.addEventListener('click',()=>go(index()-1));
 next.addEventListener('click',()=>go(index()+1));
-lb.querySelector('.lb-close').addEventListener('click',()=>lb.close());
+close.addEventListener('click',()=>lb.close());
 lb.addEventListener('click',(event)=>{const t=event.target;if(t===lb||(t instanceof Element&&t.classList.contains('lb-slide')))lb.close()});
 lb.addEventListener('keydown',(event)=>{if(event.key==='ArrowLeft'){event.preventDefault();go(index()-1)}else if(event.key==='ArrowRight'){event.preventDefault();go(index()+1)}});
 lb.addEventListener('close',()=>row.replaceChildren());
@@ -551,9 +552,11 @@ font-size:16px;white-space:pre-wrap;overflow-wrap:anywhere}
 scroll-padding:0 1rem;scrollbar-width:none}
 .shots::-webkit-scrollbar{display:none}
 .shots::after{content:"";flex:0 0 .5rem}
-.shots a{flex:none;display:block;max-width:calc(100% - 3rem);scroll-snap-align:start;border-radius:10px;overflow:hidden;line-height:0;
+.shots a{flex:none;display:block;max-width:100%;scroll-snap-align:start;border-radius:10px;overflow:hidden;line-height:0;
 box-shadow:inset 0 0 0 1px var(--sep)}
-.shots img{display:block;height:9rem;width:100%;object-fit:cover;object-position:left top;background:var(--fill)}
+.shots img{display:block;height:auto;max-height:9rem;width:auto;max-width:100%;background:var(--fill)}
+.shots.multi a{max-width:calc(100% - 3rem)}
+.shots.multi img{height:9rem;max-height:none;width:100%;max-width:none;object-fit:cover;object-position:left top}
 .shots-count{margin:.35rem 1rem 0;font-size:13px;color:var(--ink-soft)}
 .lightbox{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:rgba(0,0,0,.92);color:#fff}
 .lb-row{position:absolute;inset:0;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
