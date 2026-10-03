@@ -35,11 +35,11 @@ function project(store: Store, name: string, identity: string) {
   });
 }
 
-test('migrations bring a new file to version 2', (t) => {
-  assert.equal(freshStore(t).schemaVersion(), 2);
+test('migrations bring a new file to version 3', (t) => {
+  assert.equal(freshStore(t).schemaVersion(), 3);
 });
 
-test('reopening a migrated file re-runs nothing and stays at version 2', (t) => {
+test('reopening a migrated file re-runs nothing and stays at version 3', (t) => {
   const path = storePath(t);
 
   const first = openStore(path);
@@ -50,7 +50,7 @@ test('reopening a migrated file re-runs nothing and stays at version 2', (t) => 
   const second = openStore(path);
   t.after(() => second.close());
 
-  assert.equal(second.schemaVersion(), 2);
+  assert.equal(second.schemaVersion(), 3);
 });
 
 test('the store opens in WAL mode with a five second busy timeout', (t) => {
@@ -359,7 +359,7 @@ const V1_SCHEMA = `
     VALUES (1, 'first', 'feedback', 'approved', 'fine'), (1, 'second', 'open', NULL, NULL);
 `;
 
-test('a version 1 store with rows migrates to version 2 and keeps every row', (t) => {
+test('a version 1 store with rows migrates to version 3 and keeps every row', (t) => {
   const path = storePath(t);
   const legacy = new DatabaseSync(path);
   legacy.exec(V1_SCHEMA);
@@ -368,7 +368,7 @@ test('a version 1 store with rows migrates to version 2 and keeps every row', (t
   const store = openStore(path);
   t.after(() => store.close());
 
-  assert.equal(store.schemaVersion(), 2);
+  assert.equal(store.schemaVersion(), 3);
   assert.deepEqual(
     store.listItems().map((item) => [item.title, item.status, item.feedback]),
     [
@@ -447,7 +447,7 @@ test('importItem preserves every legacy column, including timestamps', (t) => {
   assert.deepEqual(item, {
     id: item.id, project_id: p.id, title: 'Imported card', details: 'exact details', source: 'chris', url: null,
     ref: 'novelhood #42', retest_of: null, sort: null, status: 'processed', verdict: 'note', feedback: 'exact feedback',
-    created_at: '2026-08-28 23:25:42', feedback_at: '2026-08-28 23:44:59', processed_at: '2026-08-28 23:49:45', processed_note: 'exact note',
+    created_at: '2026-08-28 23:25:42', feedback_at: '2026-08-28 23:44:59', processed_at: '2026-08-28 23:49:45', processed_note: 'exact note', pruned_images: null, pruned_at: null,
   });
 });
 
@@ -474,4 +474,177 @@ test('listProjectsByActivity puts the newest item first and never lists an archi
   const order = store.listProjectsByActivity().map((entry) => entry.slug);
 
   assert.deepEqual(order, ['busy', 'empty', 'stale']);
+});
+
+function backdate(path: string, itemId: number, modifier: string): void {
+  const db = new DatabaseSync(path);
+  db.prepare("UPDATE items SET processed_at = datetime('now', ?) WHERE id = ?").run(modifier, itemId);
+  db.close();
+}
+
+function processedCard(store: Store, projectId: number, title: string, files = 1, size = 100) {
+  const item = store.addItem({ projectId, title, status: 'feedback', verdict: 'approved', feedback: 'ok' });
+  for (let n = 0; n < files; n += 1) {
+    store.addFile({ itemId: item.id, side: 'card', name: `${n}.png`, mime: 'image/png', size, path: `app/${item.id}/${n}.png` });
+  }
+  return store.processItem(item.id, 'done');
+}
+
+function pruneScratch(t: Ctx) {
+  const path = storePath(t);
+  const store = openStore(path);
+  t.after(() => store.close());
+  return { path, store, p: project(store, 'app', '/repos/app/.git') };
+}
+
+test('a store at version 2 migrates to version 3 and gains pruned_images and pruned_at', (t) => {
+  const path = storePath(t);
+  const legacy = new DatabaseSync(path);
+  legacy.exec(V1_SCHEMA);
+  legacy.exec(`CREATE TABLE files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, item_id INTEGER NOT NULL REFERENCES items(id),
+    side TEXT NOT NULL CHECK (side IN ('card', 'feedback')), name TEXT NOT NULL,
+    path TEXT NOT NULL UNIQUE, mime TEXT NOT NULL, size INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')));
+    CREATE INDEX files_item ON files (item_id);
+    UPDATE schema_version SET version = 2;`);
+  legacy.close();
+
+  const store = openStore(path);
+  t.after(() => store.close());
+
+  assert.equal(store.schemaVersion(), 3);
+  const item = store.listItems()[0];
+  assert.equal(item?.pruned_images, null);
+  assert.equal(item?.pruned_at, null);
+});
+
+test('prunable returns a card processed 40 days ago and not one processed 10 days ago', (t) => {
+  const { path, store, p } = pruneScratch(t);
+  const old = processedCard(store, p.id, 'old');
+  const recent = processedCard(store, p.id, 'recent');
+  backdate(path, old.id, '-40 days');
+  backdate(path, recent.id, '-10 days');
+
+  const cards = store.prunable(30);
+
+  assert.deepEqual(cards.map((card) => card.id), [old.id]);
+  assert.equal(cards[0]?.files.length, 1);
+});
+
+test('prunable skips open and answered cards, however old, and processed cards with no files', (t) => {
+  const { path, store, p } = pruneScratch(t);
+  const open = store.addItem({ projectId: p.id, title: 'open' });
+  store.addFile({ itemId: open.id, side: 'card', name: 'a.png', mime: 'image/png', size: 1, path: 'app/o.png' });
+  const answered = store.addItem({ projectId: p.id, title: 'answered', status: 'feedback', verdict: 'note', feedback: 'x' });
+  store.addFile({ itemId: answered.id, side: 'card', name: 'b.png', mime: 'image/png', size: 1, path: 'app/a.png' });
+  const bare = processedCard(store, p.id, 'bare', 0);
+  const db = new DatabaseSync(path);
+  db.exec("UPDATE items SET created_at = datetime('now', '-90 days'), feedback_at = datetime('now', '-90 days')");
+  db.close();
+  backdate(path, bare.id, '-40 days');
+
+  assert.deepEqual(store.prunable(30), []);
+});
+
+test('prunable skips a card that another card retests, whatever the retest status', (t) => {
+  const { path, store, p } = pruneScratch(t);
+  const before = processedCard(store, p.id, 'before');
+  store.addItem({ projectId: p.id, title: 'retest', retestOf: before.id });
+  backdate(path, before.id, '-40 days');
+
+  assert.deepEqual(store.prunable(30), []);
+});
+
+test('prunable boundary: exactly N days is not eligible, N days plus a minute is', (t) => {
+  const { path, store, p } = pruneScratch(t);
+  const card = processedCard(store, p.id, 'edge');
+  const db = new DatabaseSync(path);
+  db.prepare("UPDATE items SET processed_at = '2026-09-03 12:00:00' WHERE id = ?").run(card.id);
+  db.close();
+
+  assert.deepEqual(store.prunable(30, undefined, '2026-10-03 12:00:00'), []);
+  assert.equal(store.prunable(30, undefined, '2026-10-03 12:01:00').length, 1);
+});
+
+test('prunable scopes to one project when given its id', (t) => {
+  const { path, store, p } = pruneScratch(t);
+  const other = project(store, 'other', '/repos/other/.git');
+  const mine = processedCard(store, p.id, 'mine');
+  const theirs = processedCard(store, other.id, 'theirs');
+  backdate(path, mine.id, '-40 days');
+  backdate(path, theirs.id, '-40 days');
+
+  assert.deepEqual(store.prunable(30, other.id).map((card) => card.id), [theirs.id]);
+  assert.equal(store.prunable(30).length, 2);
+});
+
+test('prunable rejects an older-than that is not a positive whole number', (t) => {
+  const { store } = pruneScratch(t);
+
+  assert.throws(() => store.prunable(0), StoreError);
+  assert.throws(() => store.prunable(1.5), StoreError);
+});
+
+test('pruneFiles deletes only the listed eligible cards\' rows and records count and time', (t) => {
+  const { path, store, p } = pruneScratch(t);
+  const a = processedCard(store, p.id, 'a', 2);
+  const b = processedCard(store, p.id, 'b', 1);
+  const other = processedCard(store, p.id, 'other', 1);
+  for (const card of [a, b, other]) {
+    backdate(path, card.id, '-40 days');
+  }
+
+  const removed = store.pruneFiles([a.id, b.id], 30);
+
+  assert.equal(removed.length, 3);
+  assert.deepEqual(store.listFiles(a.id), []);
+  assert.deepEqual(store.listFiles(b.id), []);
+  assert.equal(store.listFiles(other.id).length, 1);
+  assert.equal(store.getItem(a.id)?.pruned_images, 2);
+  assert.match(store.getItem(a.id)?.pruned_at ?? '', /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
+  assert.equal(store.getItem(other.id)?.pruned_images, null);
+});
+
+test('pruneFiles leaves a card alone that stopped being eligible after it was listed', (t) => {
+  const { path, store, p } = pruneScratch(t);
+  const card = processedCard(store, p.id, 'listed');
+  const retested = processedCard(store, p.id, 'retested');
+  backdate(path, card.id, '-40 days');
+  backdate(path, retested.id, '-40 days');
+  const listed = store.prunable(30).map((c) => c.id);
+  assert.equal(listed.length, 2);
+
+  store.addItem({ projectId: p.id, title: 'retest', retestOf: retested.id });
+  const db = new DatabaseSync(path);
+  db.prepare("UPDATE items SET status = 'feedback', processed_at = NULL WHERE id = ?").run(card.id);
+  db.close();
+
+  assert.deepEqual(store.pruneFiles(listed, 30), []);
+  assert.equal(store.listFiles(card.id).length, 1);
+  assert.equal(store.listFiles(retested.id).length, 1);
+  assert.equal(store.getItem(card.id)?.pruned_images, null);
+});
+
+test('a pruned card is no longer prunable', (t) => {
+  const { path, store, p } = pruneScratch(t);
+  const card = processedCard(store, p.id, 'once');
+  backdate(path, card.id, '-40 days');
+
+  store.pruneFiles([card.id], 30);
+
+  assert.deepEqual(store.prunable(30), []);
+});
+
+test('prunableBytes sums sizes over every project and ignores ineligible cards', (t) => {
+  const { path, store, p } = pruneScratch(t);
+  const other = project(store, 'other', '/repos/other/.git');
+  const a = processedCard(store, p.id, 'a', 2, 1000);
+  const b = processedCard(store, other.id, 'b', 1, 500);
+  processedCard(store, p.id, 'recent', 1, 7);
+  backdate(path, a.id, '-40 days');
+  backdate(path, b.id, '-40 days');
+
+  assert.equal(store.prunableBytes(30), 2500);
+  assert.equal(pruneScratch(t).store.prunableBytes(30), 0);
 });

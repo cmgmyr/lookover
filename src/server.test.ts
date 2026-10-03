@@ -1479,7 +1479,7 @@ test('only an explicit application/json Accept gets JSON; a browser navigation o
 });
 
 function pageScript(openCards = 0): string {
-  const open = Array.from({ length: openCards }, (_, index) => ({ id: index + 1, project_id: 1, title: `Open ${index + 1}`, details: '', source: 'lane', url: null, ref: null, retest_of: null, sort: null, status: 'open', verdict: null, feedback: null, created_at: '', feedback_at: null, processed_at: null, processed_note: null }) satisfies Item);
+  const open = Array.from({ length: openCards }, (_, index) => ({ id: index + 1, project_id: 1, title: `Open ${index + 1}`, details: '', source: 'lane', url: null, ref: null, retest_of: null, sort: null, status: 'open', verdict: null, feedback: null, created_at: '', feedback_at: null, processed_at: null, processed_note: null, pruned_images: null, pruned_at: null }) satisfies Item);
   const html = renderPage({ projects: [], current: 'all', open, waiting: [], done: [], counts: new Map() });
   return html.slice(html.indexOf('<script>') + 8, html.indexOf('</script>'));
 }
