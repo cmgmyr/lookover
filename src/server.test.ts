@@ -1792,26 +1792,35 @@ test('the page script keeps the filer\'s Project select on the tester\'s choice 
   assert.equal(select.value, 'second');
 });
 
-test('the page script shows the server\'s message on a refusal, re-enables the buttons and leaves the card alone', async () => {
+test('the page script shows the server\'s message on a refusal, re-enables the form and permits retry', async () => {
   const run = runSubmit({ reply: () => Promise.resolve({ ok: false, status: 413, json: () => Promise.resolve({ ok: false, error: 'big.png is 11.0 MB, over the 10 MB limit' }) }), submitter: { name: 'verdict', value: 'needs-work' } });
   await run.done;
 
   assert.equal(run.toast.textContent, 'big.png is 11.0 MB, over the 10 MB limit');
   assert.ok(run.card.buttons.every((button) => !button.disabled));
+  assert.ok(run.card.fields.every((field) => !field.readOnly));
   assert.equal(run.card.replaced, undefined);
   assert.equal(run.card.dataset.busy, undefined);
+  await run.again();
+  assert.equal(run.calls.length, 2);
 });
 
-test('the page script survives a dead network and a non-JSON answer with a toast and live buttons', async () => {
+test('the page script restores the form after network and non-JSON failures so both allow retries', async () => {
   const offline = runSubmit({ reply: () => Promise.reject(new TypeError('Failed to fetch')) });
   await offline.done;
   assert.equal(offline.toast.textContent, 'Could not reach lookover. It may have saved; reload before retrying.');
   assert.ok(offline.card.buttons.every((button) => !button.disabled));
+  assert.ok(offline.card.fields.every((field) => !field.readOnly));
+  await offline.again();
+  assert.equal(offline.calls.length, 2);
 
   const garbage = runSubmit({ reply: () => Promise.resolve({ ok: false, status: 502, json: () => Promise.reject(new SyntaxError('no json')) }) });
   await garbage.done;
   assert.equal(garbage.toast.textContent, 'Could not save (502)');
   assert.ok(garbage.card.buttons.every((button) => !button.disabled));
+  assert.ok(garbage.card.fields.every((field) => !field.readOnly));
+  await garbage.again();
+  assert.equal(garbage.calls.length, 2);
 });
 
 test('a second submit while one is in flight sends nothing', async () => {
