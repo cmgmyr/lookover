@@ -1479,7 +1479,7 @@ test('only an explicit application/json Accept gets JSON; a browser navigation o
 });
 
 function pageScript(openCards = 0): string {
-  const open = Array.from({ length: openCards }, (_, index) => ({ id: index + 1, project_id: 1, title: `Open ${index + 1}`, details: '', source: 'lane', url: null, ref: null, retest_of: null, sort: null, status: 'open', verdict: null, feedback: null, created_at: '', feedback_at: null, processed_at: null, processed_note: null }) satisfies Item);
+  const open = Array.from({ length: openCards }, (_, index) => ({ id: index + 1, project_id: 1, title: `Open ${index + 1}`, details: '', source: 'lane', url: null, ref: null, retest_of: null, sort: null, status: 'open', verdict: null, feedback: null, created_at: '', feedback_at: null, processed_at: null, processed_note: null, pruned_images: null, pruned_at: null }) satisfies Item);
   const html = renderPage({ projects: [], current: 'all', open, waiting: [], done: [], counts: new Map() });
   return html.slice(html.indexOf('<script>') + 8, html.indexOf('</script>'));
 }
@@ -1934,4 +1934,44 @@ test('the toast is pinned to the top of the viewport', async (t) => {
 
   assert.match(html, /\.toast\{position:fixed;[^}]*top:calc\(.75rem \+ env\(safe-area-inset-top\)\)/);
   assert.doesNotMatch(html, /\.toast\{[^}]*bottom:/);
+});
+
+function processedWithImages(t: { after: (fn: () => void) => void }, daysAgo: number, count = 2) {
+  const box = scratch(t);
+  const card = box.store.addItem({ projectId: box.project.id, title: 'Shipped card', status: 'feedback', verdict: 'approved', feedback: 'ok' });
+  for (let n = 0; n < count; n += 1) {
+    box.store.addFile({ itemId: card.id, side: 'card', name: `${n}.png`, mime: 'image/png', size: 1024 * 1024, path: `app/${card.id}-${n}.png` });
+  }
+  box.store.processItem(card.id, 'done');
+  const db = new DatabaseSync(join(box.dir, 'queue.sqlite'));
+  db.prepare("UPDATE items SET processed_at = datetime('now', ?) WHERE id = ?").run(`-${daysAgo} days`, card.id);
+  db.close();
+  return { ...box, card };
+}
+
+test('the page has no prune hint when nothing is eligible', async (t) => {
+  const { server } = processedWithImages(t, 10);
+  const base = await listen(server);
+
+  assert.doesNotMatch(await (await get(`${base}/p/app`)).text(), /<p class="prune-hint">/);
+});
+
+test('the page shows the MB figure and the command when cards are past 30 days', async (t) => {
+  const { server } = processedWithImages(t, 40, 3);
+  const base = await listen(server);
+
+  const html = await (await get(`${base}/p/app`)).text();
+
+  assert.match(html, /<p class="prune-hint">3\.0 MB of images on cards processed 30\+ days ago\. Run <code>lookover prune --all<\/code>\.<\/p>/);
+});
+
+test('a pruned processed card says how many images were removed and when', async (t) => {
+  const { store, card, server } = processedWithImages(t, 40);
+  store.pruneFiles([card.id], 30);
+  const base = await listen(server);
+
+  const html = await (await get(`${base}/p/app`)).text();
+
+  assert.match(html, /· 2 images removed \d{4}-\d\d-\d\d<\/div>/);
+  assert.doesNotMatch(html, /<p class="prune-hint">/);
 });

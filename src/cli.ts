@@ -8,6 +8,7 @@ import { runImport } from './commands/import.ts';
 import { runList } from './commands/list.ts';
 import { runOpen } from './commands/open.ts';
 import { runProcess } from './commands/process.ts';
+import { runPrune } from './commands/prune.ts';
 import { runProject } from './commands/project.ts';
 import { runSkill } from './commands/skill.ts';
 import { runServe } from './commands/serve.ts';
@@ -31,6 +32,10 @@ usage: lookover <command> [options]
 
   process <id> --note <text>
       Mark an answered card handled.
+
+  prune [--older-than <n>d] [--project <slug> | --all] [--yes]
+      Remove the images of cards processed more than <n> days ago (default
+      30d). Lists what it would remove unless you pass --yes.
 
   open [--project <slug> | --all] [--count] [--json]
       Cards still waiting on the tester.
@@ -70,6 +75,7 @@ const COMMANDS = new Map<string, (argv: string[]) => number>([
   ['add', runAdd],
   ['feedback', runFeedback],
   ['process', runProcess],
+  ['prune', runPrune],
   ['open', runOpen],
   ['list', runList],
   ['project', runProject],

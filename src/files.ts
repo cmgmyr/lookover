@@ -298,7 +298,7 @@ export function storeImage(
   return storeImages(store, home, projectSlug, itemId, side, prepareImages([{ name, data }]))[0] as FileRow;
 }
 
-/** The absolute path of a stored file; refuses anything that leaves <home>/files. */
+/** The absolute path of a stored file; a lexical check that refuses `..` and absolute escapes but follows symlinks inside <home>/files. */
 export function storedPath(home: string, storedRelative: string): string {
   const root = resolve(home, FILES_DIR);
   const absolute = resolve(root, storedRelative);

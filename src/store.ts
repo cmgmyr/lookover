@@ -50,6 +50,8 @@ export interface Item {
   feedback_at: string | null;
   processed_at: string | null;
   processed_note: string | null;
+  pruned_images: number | null;
+  pruned_at: string | null;
 }
 
 export type FileSide = 'card' | 'feedback';
@@ -73,6 +75,14 @@ export interface AddFileInput {
   mime: string;
   size: number;
   path: string;
+}
+
+export interface PrunableCard {
+  id: number;
+  project_id: number;
+  title: string;
+  processed_at: string;
+  files: FileRow[];
 }
 
 export interface Counts {
@@ -178,11 +188,31 @@ const MIGRATIONS: readonly string[] = [
 
   CREATE INDEX files_item ON files (item_id);
   `,
+  `
+  ALTER TABLE items ADD COLUMN pruned_images INTEGER;
+  ALTER TABLE items ADD COLUMN pruned_at TEXT;
+  `,
 ];
 
 function orderBy(order: ItemOrder | undefined): string {
   // Nulls last: an unsorted card queues behind every card the lead ranked.
   return order === 'queue' ? 'sort IS NULL, sort, id' : 'id DESC';
+}
+
+/**
+ * Binds (asOf, '-<n> days'). A card some other card retests is kept, so the
+ * retest still has its before shot.
+ */
+const PRUNABLE = `status = 'processed'
+  AND processed_at < datetime(COALESCE(?, 'now'), ?)
+  AND NOT EXISTS (SELECT 1 FROM items retest WHERE retest.retest_of = items.id)
+  AND EXISTS (SELECT 1 FROM files WHERE files.item_id = items.id)`;
+
+function pruneCutoff(olderThanDays: number): string {
+  if (!Number.isInteger(olderThanDays) || olderThanDays < 1) {
+    throw new StoreError(`older-than must be a positive whole number of days, got ${olderThanDays}`);
+  }
+  return `-${olderThanDays} days`;
 }
 
 const LIVE_PROJECT = 'project_id IN (SELECT id FROM projects WHERE archived_at IS NULL)';
@@ -531,6 +561,76 @@ export class Store {
     return byItem;
   }
 
+  /**
+   * Processed cards past the cutoff that still have files. `asOf` replaces the
+   * clock ('YYYY-MM-DD HH:MM:SS', UTC) so a test can sit on the boundary.
+   */
+  prunable(olderThanDays: number, projectId?: number, asOf?: string): PrunableCard[] {
+    const cutoff = pruneCutoff(olderThanDays);
+    const scope = projectId === undefined ? '' : ' AND project_id = ?';
+    const params: (string | number | null)[] = [asOf ?? null, cutoff];
+    if (projectId !== undefined) {
+      params.push(projectId);
+    }
+
+    const cards = this.db
+      .prepare(`SELECT id, project_id, title, processed_at FROM items WHERE ${PRUNABLE}${scope} ORDER BY processed_at, id`)
+      .all(...params) as Record<string, unknown>[];
+    const files = this.listFilesFor(cards.map((card) => Number(card['id'])));
+
+    return cards.map((card) => ({
+      id: Number(card['id']),
+      project_id: Number(card['project_id']),
+      title: text(card['title']),
+      processed_at: text(card['processed_at']),
+      files: files.get(Number(card['id'])) ?? [],
+    }));
+  }
+
+  /**
+   * Deletes the file rows of the listed cards that are STILL prunable and
+   * records the count and time on each card. The filter runs again inside the
+   * transaction, so a card reopened or retested since the listing is left
+   * alone. The caller unlinks the returned rows' files after this commits.
+   */
+  pruneFiles(itemIds: readonly number[], olderThanDays: number, asOf?: string): FileRow[] {
+    const cutoff = pruneCutoff(olderThanDays);
+
+    return this.write(() => {
+      const removed: FileRow[] = [];
+
+      for (const id of itemIds) {
+        const eligible = this.db
+          .prepare(`SELECT id FROM items WHERE id = ? AND ${PRUNABLE}`)
+          .get(id, asOf ?? null, cutoff);
+        if (eligible === undefined) {
+          continue;
+        }
+
+        const rows = this.listFiles(id);
+        this.db.prepare('DELETE FROM files WHERE item_id = ?').run(id);
+        this.db
+          .prepare("UPDATE items SET pruned_images = ?, pruned_at = datetime('now') WHERE id = ?")
+          .run(rows.length, id);
+        removed.push(...rows);
+      }
+
+      return removed;
+    });
+  }
+
+  /** Bytes the next prune would free, across every project: the disk is shared. */
+  prunableBytes(olderThanDays: number, asOf?: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(size), 0) AS bytes FROM files
+         WHERE item_id IN (SELECT id FROM items WHERE ${PRUNABLE})`,
+      )
+      .get(asOf ?? null, pruneCutoff(olderThanDays));
+
+    return Number((row as Record<string, unknown>)['bytes']);
+  }
+
   counts(projectId?: number, options: { excludeArchived?: boolean } = {}): Counts {
     const where: string[] = [];
     const params: number[] = [];
@@ -714,6 +814,8 @@ function toItem(row: unknown): Item {
     feedback_at: maybeText(record['feedback_at']),
     processed_at: maybeText(record['processed_at']),
     processed_note: maybeText(record['processed_note']),
+    pruned_images: maybeNumber(record['pruned_images']),
+    pruned_at: maybeText(record['pruned_at']),
   };
 }
 
