@@ -719,6 +719,8 @@ test('every --json read command emits parseable json with stable keys', (t) => {
     'feedback_at',
     'processed_at',
     'processed_note',
+    'pruned_images',
+    'pruned_at',
     'project',
     'files',
   ]);
@@ -1052,4 +1054,139 @@ test('serve ignores a stale pid without leaking ps diagnostics', async (t) => {
   t.after(() => { served.lookover.kill('SIGTERM'); });
   assert.match(served.line, /^lookover: http:\/\/127\.0\.0\.1:\d+$/);
   assert.equal(served.stderr, '');
+});
+
+interface PruneCard {
+  id: number;
+  paths: string[];
+}
+
+/** A processed card with real files on disk, backdated by `days`. */
+function prunableCard(box: Sandbox, title: string, days: number, count = 2, rowPath?: string): PruneCard {
+  const id = addCard(box, title);
+  const store = openStore(join(box.home, 'queue.sqlite'));
+  const paths: string[] = [];
+  mkdirSync(join(box.home, 'files', 'novel-hood'), { recursive: true });
+  for (let n = 0; n < count; n += 1) {
+    const path = rowPath ?? `novel-hood/${id}-${n}.png`;
+    if (rowPath === undefined) {
+      writeFileSync(join(box.home, 'files', path), Buffer.alloc(1024 * 1024));
+    }
+    store.addFile({ itemId: id, side: 'card', name: `${n}.png`, mime: 'image/png', size: 1024 * 1024, path });
+    paths.push(path);
+  }
+  store.close();
+
+  assert.equal(run(box, ['feedback']).status, 0);
+  const db = new DatabaseSync(join(box.home, 'queue.sqlite'));
+  db.prepare("UPDATE items SET status = 'processed', processed_at = datetime('now', ?) WHERE id = ?").run(`-${days} days`, id);
+  db.close();
+  return { id, paths };
+}
+
+function fileRows(box: Sandbox): number {
+  const db = new DatabaseSync(join(box.home, 'queue.sqlite'));
+  const row = db.prepare('SELECT COUNT(*) AS n FROM files').get() as { n: number };
+  db.close();
+  return row.n;
+}
+
+test('prune without --yes lists each card and the total, and deletes nothing', (t) => {
+  const box = registered(t);
+  const old = prunableCard(box, 'Old card', 40);
+
+  const result = run(box, ['prune']);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`^#${old.id} novel-hood Old card: 2 images, 2\\.0 MB\\n`));
+  assert.match(result.stdout, /2 images, 2\.0 MB on 1 cards; run with --yes to remove them\n$/);
+  assert.equal(fileRows(box), 2);
+  assert.ok(existsSync(join(box.home, 'files', old.paths[0] as string)));
+});
+
+test('prune --yes removes files and rows, a second run has nothing to prune', (t) => {
+  const box = registered(t);
+  const old = prunableCard(box, 'Old card', 40);
+  const recent = prunableCard(box, 'Recent card', 10);
+
+  const result = run(box, ['prune', '--yes']);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'removed 2 images (2.0 MB) from 1 cards\n');
+  assert.equal(existsSync(join(box.home, 'files', old.paths[0] as string)), false);
+  assert.ok(existsSync(join(box.home, 'files', recent.paths[0] as string)));
+  assert.equal(fileRows(box), 2);
+
+  const again = run(box, ['prune', '--yes']);
+  assert.equal(again.status, 0);
+  assert.equal(again.stdout, 'nothing to prune (cards processed more than 30 days ago with images)\n');
+});
+
+test('prune --yes tolerates a file that is already gone', (t) => {
+  const box = registered(t);
+  const old = prunableCard(box, 'Old card', 40, 1);
+  rmSync(join(box.home, 'files', old.paths[0] as string));
+
+  const result = run(box, ['prune', '--yes']);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fileRows(box), 0);
+});
+
+test('prune skips a card whose stored path leaves files/ and never touches the file outside', (t) => {
+  const box = registered(t);
+  mkdirSync(box.home, { recursive: true });
+  const outside = join(box.home, 'precious.txt');
+  writeFileSync(outside, 'keep');
+  prunableCard(box, 'Evil card', 40, 1, '../precious.txt');
+
+  const result = run(box, ['prune', '--yes']);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /skipped #\d+: stored path leaves the files directory: \.\.\/precious\.txt/);
+  assert.equal(readFileSync(outside, 'utf8'), 'keep');
+  assert.equal(fileRows(box), 1);
+});
+
+test('prune --older-than moves the cutoff and a bad value is an error naming it', (t) => {
+  const box = registered(t);
+  prunableCard(box, 'Card', 10);
+
+  assert.match(run(box, ['prune']).stdout, /nothing to prune \(cards processed more than 30 days/);
+  assert.match(run(box, ['prune', '--older-than', '5d']).stdout, /2 images, 2\.0 MB on 1 cards/);
+
+  for (const bad of ['30', '0d', 'x', '-5d', '1.5d']) {
+    const result = run(box, ['prune', `--older-than=${bad}`]);
+    assert.equal(result.status, 1, bad);
+    assert.ok(result.stderr.includes(`'${bad}'`), result.stderr);
+  }
+});
+
+test('prune scopes like feedback: the current project by default, every project with --all', (t) => {
+  const box = registered(t);
+  const other = join(box.dir, 'other');
+  mkdirSync(other);
+  git(other, 'init', '-q', '-b', 'main');
+  assert.equal(run(box, ['init', '--name', 'Other'], { cwd: other }).status, 0);
+  prunableCard(box, 'Mine', 40);
+  const added = run(box, ['add', '--title', 'Theirs', '--project', 'other'], { cwd: other });
+  const id = Number(/added #(\d+)/.exec(added.stdout)?.[1]);
+  const store = openStore(join(box.home, 'queue.sqlite'));
+  mkdirSync(join(box.home, 'files', 'other'), { recursive: true });
+  writeFileSync(join(box.home, 'files', 'other', 'x.png'), Buffer.alloc(10));
+  store.addFile({ itemId: id, side: 'card', name: 'x.png', mime: 'image/png', size: 10, path: 'other/x.png' });
+  store.close();
+  run(box, ['feedback']);
+  const db = new DatabaseSync(join(box.home, 'queue.sqlite'));
+  db.prepare("UPDATE items SET status = 'processed', processed_at = datetime('now', '-40 days') WHERE id = ?").run(id);
+  db.close();
+
+  assert.match(run(box, ['prune']).stdout, /on 1 cards/);
+  assert.match(run(box, ['prune', '--project', 'other']).stdout, /#\d+ other Theirs: 1 images/);
+  assert.match(run(box, ['prune', '--all']).stdout, /on 2 cards/);
+  assert.equal(run(box, ['prune', '--all', '--project', 'other']).status, 1);
+});
+
+test('help documents prune', (t) => {
+  assert.match(run(sandbox(t), ['help']).stdout, /prune \[--older-than <n>d\]/);
 });
