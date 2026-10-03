@@ -436,6 +436,19 @@ test('the page CSS caps a shot below the strip width so the next one peeks', () 
   assert.match(html, /\.shots a\{[^}]*max-width:calc\(100% - 3rem\)/);
 });
 
+test('the page renders one lightbox dialog and the shot links keep their file hrefs with the token', async (t) => {
+  const { dir, store, item, server } = scratch(t, { token: 'tok en' });
+  const base = await listen(server);
+  const { storeImage } = await import('./files.ts');
+  storeImage(store, dir, 'app', item.id, 'card', 'a.png', PNG);
+  storeImage(store, dir, 'app', item.id, 'card', 'b.png', PNG);
+
+  const html = await (await get(`${base}/p/app?t=tok%20en`)).text();
+
+  assert.equal(html.match(/<dialog class="lightbox"/g)?.length, 1);
+  assert.equal(html.match(/<a href="\/files\/\d+\?t=tok%20en"><img /g)?.length, 2);
+});
+
 test('the upload strip escapes a hostile file name', async (t) => {
   const { store, item, server } = scratch(t);
   const base = await listen(server);
