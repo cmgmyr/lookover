@@ -4,7 +4,7 @@ import { basename, dirname, sep } from 'node:path';
 import { accentInk, accentOnDark, accentOnLight, safeAccent } from './accent.ts';
 import { MAX_FILE_BYTES, MAX_FILES } from './files.ts';
 import { renderMarkdown } from './markdown.ts';
-import type { Counts, FileRow, FileSide, Item, Project } from './store.ts';
+import type { Counts, FileRow, Item, Project } from './store.ts';
 
 export interface PageView {
   projects: Project[];
@@ -263,7 +263,7 @@ function card(item: Item, token: string, tokenValue: string, waiting: boolean, r
   const body = waiting
     ? (item.feedback === null || item.feedback === '' ? '' : `<div class="quote">${escapeHtml(item.feedback)}</div>`)
     : `<div class="details">${renderMarkdown(item.details)}</div>`;
-  const strip = shots(files?.get(item.id) ?? [], waiting ? 'feedback' : 'card', token);
+  const strip = shots(files?.get(item.id) ?? [], token);
   // The buttons come last because each one sends the form: you write, then
   // the verdict you tap submits what you wrote.
   // Only a card you filed is your own finding; Approved and Needs work mean nothing on it.
@@ -300,12 +300,16 @@ function photoInput(id: string): string {
   return `<label class="photo" for="${id}">${PLUS}Add photo</label><input id="${id}" class="photo-input" type="file" name="photo" accept="image/jpeg,image/png,image/webp,image/gif" multiple><div class="picks" hidden></div>`;
 }
 
-/** Thumbnails are the full file sized by CSS; a tap opens it at full size. */
-function shots(files: FileRow[], side: FileSide, token: string): string {
-  const own = files.filter((file) => file.side === side);
+/**
+ * Thumbnails are the full file sized by CSS; a tap opens it at full size. The
+ * agent's shots come first and your photos after, so an answered card keeps
+ * both in one strip. Two or more get a count, because the strip hides its scrollbar.
+ */
+function shots(files: FileRow[], token: string): string {
+  const own = [...files.filter((file) => file.side === 'card'), ...files.filter((file) => file.side === 'feedback')];
   if (own.length === 0) return '';
   const images = own.map((file) => `<a href="/files/${file.id}${token}"><img src="/files/${file.id}${token}" alt="${escapeHtml(file.name)}" loading="lazy"></a>`).join('');
-  return `<div class="shots">${images}</div>`;
+  return `<div class="shots">${images}</div>${own.length > 1 ? `<p class="shots-count">${own.length} images</p>` : ''}`;
 }
 
 /** The source the Found something else form files under; it is what tells your cards from an agent's. */
@@ -531,9 +535,10 @@ font-size:16px;white-space:pre-wrap;overflow-wrap:anywhere}
 scroll-padding:0 1rem;scrollbar-width:none}
 .shots::-webkit-scrollbar{display:none}
 .shots::after{content:"";flex:0 0 .5rem}
-.shots a{flex:none;display:block;scroll-snap-align:start;border-radius:10px;overflow:hidden;line-height:0;
+.shots a{flex:none;display:block;max-width:calc(100% - 3rem);scroll-snap-align:start;border-radius:10px;overflow:hidden;line-height:0;
 box-shadow:inset 0 0 0 1px var(--sep)}
-.shots img{display:block;height:9rem;width:auto;max-width:none;background:var(--fill)}
+.shots img{display:block;height:9rem;width:100%;object-fit:cover;object-position:left top;background:var(--fill)}
+.shots-count{margin:.35rem 1rem 0;font-size:13px;color:var(--ink-soft)}
 .reply{margin:1rem 0 0;padding:1rem;box-shadow:inset 0 1px 0 var(--sep)}
 .answer{margin:1rem 0 0;box-shadow:inset 0 1px 0 var(--sep)}
 .answer>.reply{margin:0;padding-top:.25rem;box-shadow:none}

@@ -388,7 +388,7 @@ test('a tester-filed card with a bad photo is a 400 and no card is filed', async
   assert.equal(store.listItems({ projectId: project.id, status: 'feedback' }).length, 0);
 });
 
-test('an agent card shows its card-side images after the details, not the feedback side', async (t) => {
+test('an open agent card shows its card-side images after the details', async (t) => {
   const { dir, store, item, server } = scratch(t);
   const base = await listen(server);
   const { storeImage } = await import('./files.ts');
@@ -397,6 +397,43 @@ test('an agent card shows its card-side images after the details, not the feedba
   const html = await (await get(`${base}/p/app`)).text();
 
   assert.match(html, /class="details"><\/div><div class="shots"><a href="\/files\/1"><img src="\/files\/1" alt="before\.png"/);
+});
+
+test('an answered card renders its card-side images, then the feedback photos, in one strip', async (t) => {
+  const { dir, store, item, server } = scratch(t);
+  const base = await listen(server);
+  const { storeImage } = await import('./files.ts');
+  storeImage(store, dir, 'app', item.id, 'card', 'shot-1.png', PNG);
+  storeImage(store, dir, 'app', item.id, 'card', 'shot-2.png', PNG);
+  store.saveFeedback(item.id, { verdict: 'needs-work', feedback: 'off' });
+  storeImage(store, dir, 'app', item.id, 'feedback', 'photo-1.png', PNG);
+
+  const html = await (await get(`${base}/p/app`)).text();
+
+  assert.equal(html.match(/<div class="shots">/g)?.length, 1);
+  const names = [...html.matchAll(/<img src="\/files\/\d+" alt="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(names, ['shot-1.png', 'shot-2.png', 'photo-1.png']);
+  assert.match(html, /<p class="shots-count">3 images<\/p>/);
+});
+
+test('a card with five images renders five links and a count; one image has no count line', async (t) => {
+  const { dir, store, item, server } = scratch(t);
+  const base = await listen(server);
+  const { storeImage } = await import('./files.ts');
+  storeImage(store, dir, 'app', item.id, 'card', 'only.png', PNG);
+
+  const one = await (await get(`${base}/p/app`)).text();
+
+  assert.doesNotMatch(one, /class="shots-count"/);
+  for (const n of [2, 3, 4, 5]) storeImage(store, dir, 'app', item.id, 'card', `s${n}.png`, PNG);
+  const five = await (await get(`${base}/p/app`)).text();
+  assert.equal(five.match(/<a href="\/files\/\d+"><img /g)?.length, 5);
+  assert.match(five, /<p class="shots-count">5 images<\/p>/);
+});
+
+test('the page CSS caps a shot below the strip width so the next one peeks', () => {
+  const html = renderPage({ projects: [], current: 'all', open: [], waiting: [], done: [], counts: new Map() });
+  assert.match(html, /\.shots a\{[^}]*max-width:calc\(100% - 3rem\)/);
 });
 
 test('the upload strip escapes a hostile file name', async (t) => {
