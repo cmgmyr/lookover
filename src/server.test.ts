@@ -183,7 +183,7 @@ test('multipart feedback with two photos saves the verdict, stores both files an
   assert.deepEqual(files.map((f) => [f.side, f.name, f.mime]), [['feedback', 'a.png', 'image/png'], ['feedback', 'b.gif', 'image/gif']]);
   assert.equal(filesOnDisk(dir).length, 2);
   const html = await (await get(`${base}/p/app`)).text();
-  assert.match(html, /<div class="shots"><a href="\/files\/1"><img src="\/files\/1" alt="a\.png" loading="lazy"><\/a><a href="\/files\/2">/);
+  assert.match(html, /<div class="shots multi"><a href="\/files\/1"><img src="\/files\/1" alt="a\.png" loading="lazy"><\/a><a href="\/files\/2">/);
   const cardForms = html.match(/<form class="card" id="item-\d+"[^>]*>/g) ?? [];
   assert.ok(cardForms.length > 0);
   for (const form of cardForms) assert.match(form, /enctype="multipart\/form-data"/);
@@ -388,7 +388,7 @@ test('a tester-filed card with a bad photo is a 400 and no card is filed', async
   assert.equal(store.listItems({ projectId: project.id, status: 'feedback' }).length, 0);
 });
 
-test('an agent card shows its card-side images after the details, not the feedback side', async (t) => {
+test('an open agent card shows its card-side images after the details', async (t) => {
   const { dir, store, item, server } = scratch(t);
   const base = await listen(server);
   const { storeImage } = await import('./files.ts');
@@ -397,6 +397,78 @@ test('an agent card shows its card-side images after the details, not the feedba
   const html = await (await get(`${base}/p/app`)).text();
 
   assert.match(html, /class="details"><\/div><div class="shots"><a href="\/files\/1"><img src="\/files\/1" alt="before\.png"/);
+});
+
+test('an answered card renders its card-side images, then the feedback photos, in one strip', async (t) => {
+  const { dir, store, item, server } = scratch(t);
+  const base = await listen(server);
+  const { storeImage } = await import('./files.ts');
+  storeImage(store, dir, 'app', item.id, 'card', 'shot-1.png', PNG);
+  storeImage(store, dir, 'app', item.id, 'card', 'shot-2.png', PNG);
+  store.saveFeedback(item.id, { verdict: 'needs-work', feedback: 'off' });
+  storeImage(store, dir, 'app', item.id, 'feedback', 'photo-1.png', PNG);
+
+  const html = await (await get(`${base}/p/app`)).text();
+
+  assert.equal(html.match(/<div class="shots multi">/g)?.length, 1);
+  const names = [...html.matchAll(/<img src="\/files\/\d+" alt="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(names, ['shot-1.png', 'shot-2.png', 'photo-1.png']);
+  assert.match(html, /<p class="shots-count">3 images<\/p>/);
+});
+
+test('a card with five images renders five links and a count; one image has no count line', async (t) => {
+  const { dir, store, item, server } = scratch(t);
+  const base = await listen(server);
+  const { storeImage } = await import('./files.ts');
+  storeImage(store, dir, 'app', item.id, 'card', 'only.png', PNG);
+
+  const one = await (await get(`${base}/p/app`)).text();
+
+  assert.doesNotMatch(one, /class="shots-count"/);
+  for (const n of [2, 3, 4, 5]) storeImage(store, dir, 'app', item.id, 'card', `s${n}.png`, PNG);
+  const five = await (await get(`${base}/p/app`)).text();
+  assert.equal(five.match(/<a href="\/files\/\d+"><img /g)?.length, 5);
+  assert.match(five, /<p class="shots-count">5 images<\/p>/);
+});
+
+test('the page CSS caps a shot below the strip width so the next one peeks', () => {
+  const html = renderPage({ projects: [], current: 'all', open: [], waiting: [], done: [], counts: new Map() });
+  assert.match(html, /\.shots\.multi a\{[^}]*max-width:calc\(100% - 3rem\)/);
+});
+
+test('the page renders exactly one lightbox dialog', async (t) => {
+  const { server } = scratch(t);
+  const base = await listen(server);
+
+  const html = await (await get(`${base}/p/app`)).text();
+
+  assert.equal(html.match(/<dialog class="lightbox"/g)?.length, 1);
+});
+
+test('shot links and thumbnails carry the page token', async (t) => {
+  const { dir, store, item, server } = scratch(t, { token: 'tok en' });
+  const base = await listen(server);
+  const { storeImage } = await import('./files.ts');
+  storeImage(store, dir, 'app', item.id, 'card', 'a.png', PNG);
+  storeImage(store, dir, 'app', item.id, 'card', 'b.png', PNG);
+
+  const html = await (await get(`${base}/p/app?t=tok%20en`)).text();
+
+  assert.equal(html.match(/<a href="\/files\/\d+\?t=tok%20en"><img src="\/files\/\d+\?t=tok%20en"/g)?.length, 2);
+});
+
+test('a one-image strip does not get the multi class that caps and crops its shots', async (t) => {
+  const { dir, store, item, server } = scratch(t);
+  const base = await listen(server);
+  const { storeImage } = await import('./files.ts');
+  storeImage(store, dir, 'app', item.id, 'card', 'only.png', PNG);
+  const one = await (await get(`${base}/p/app`)).text();
+  storeImage(store, dir, 'app', item.id, 'card', 'second.png', PNG);
+  const two = await (await get(`${base}/p/app`)).text();
+
+  assert.match(one, /<div class="shots">/);
+  assert.doesNotMatch(one, /<div class="shots multi">/);
+  assert.match(two, /<div class="shots multi">/);
 });
 
 test('the upload strip escapes a hostile file name', async (t) => {
@@ -1288,7 +1360,7 @@ test('a JSON save with photos returns the card with its photo strip and the --js
 
   assert.equal(store.listFiles(item.id).length, 2);
   assert.deepEqual(body.item?.files.map((file) => [file.side, file.name, file.mime, file.path.startsWith(dir)]), [['feedback', 'a.png', 'image/png', true], ['feedback', 'b.gif', 'image/gif', true]]);
-  assert.match(body.html ?? '', /<div class="shots"><a href="\/files\/1"><img src="\/files\/1" alt="a\.png" loading="lazy"><\/a><a href="\/files\/2">/);
+  assert.match(body.html ?? '', /<div class="shots multi"><a href="\/files\/1"><img src="\/files\/1" alt="a\.png" loading="lazy"><\/a><a href="\/files\/2">/);
 });
 
 test('a JSON save from the All view returns the card with its project badge, and from a project page without one', async (t) => {

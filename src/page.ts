@@ -4,7 +4,7 @@ import { basename, dirname, sep } from 'node:path';
 import { accentInk, accentOnDark, accentOnLight, safeAccent } from './accent.ts';
 import { MAX_FILE_BYTES, MAX_FILES } from './files.ts';
 import { renderMarkdown } from './markdown.ts';
-import type { Counts, FileRow, FileSide, Item, Project } from './store.ts';
+import type { Counts, FileRow, Item, Project } from './store.ts';
 
 export interface PageView {
   projects: Project[];
@@ -54,7 +54,7 @@ ${newSection}
 <section><h2 data-section="open">Awaiting your test<span class="n">${view.open.length}</span></h2>${view.open.length === 0 ? `<p class="empty">${doneMark()}Nothing to test. A real and good state.</p>` : grouped(view, view.open).map((item) => renderCard(view, item, false)).join('')}</section>
 <section><h2 data-section="feedback">Waiting for the agent<span class="n">${view.waiting.length}</span></h2>${view.waiting.length === 0 ? '<p class="none">Nothing saved yet.</p>' : grouped(view, view.waiting).map((item) => renderCard(view, item, true)).join('')}</section>
 <section><h2>Processed<span class="n">${view.done.length}</span></h2>${view.done.length === 0 ? '<p class="none">Nothing processed yet.</p>' : `<details class="fold history"><summary>Show history${CHEVRON}</summary>${grouped(view, view.done).map((item) => `<div class="done" id="item-${item.id}"><strong>${escapeHtml(item.title)}</strong> <span class="badge ${escapeHtml(item.verdict ?? 'note')}">${escapeHtml(itemLabel(item))}</span><div class="meta">${escapeHtml(item.processed_at ?? '')}${item.processed_note ? ` · ${escapeHtml(item.processed_note)}` : ''}</div></div>`).join('')}</details>`}</section>
-</main><div id="toast" class="toast" role="status"></div>${pollScript(projectQuery, pollToken, view.open.length, baseTitleText)}</body></html>`;
+</main><div id="toast" class="toast" role="status"></div>${LIGHTBOX}${pollScript(projectQuery, pollToken, view.open.length, baseTitleText)}</body></html>`;
 }
 
 function tokenQuery(view: CardView): string {
@@ -263,7 +263,7 @@ function card(item: Item, token: string, tokenValue: string, waiting: boolean, r
   const body = waiting
     ? (item.feedback === null || item.feedback === '' ? '' : `<div class="quote">${escapeHtml(item.feedback)}</div>`)
     : `<div class="details">${renderMarkdown(item.details)}</div>`;
-  const strip = shots(files?.get(item.id) ?? [], waiting ? 'feedback' : 'card', token);
+  const strip = shots(files?.get(item.id) ?? [], token);
   // The buttons come last because each one sends the form: you write, then
   // the verdict you tap submits what you wrote.
   // Only a card you filed is your own finding; Approved and Needs work mean nothing on it.
@@ -300,12 +300,16 @@ function photoInput(id: string): string {
   return `<label class="photo" for="${id}">${PLUS}Add photo</label><input id="${id}" class="photo-input" type="file" name="photo" accept="image/jpeg,image/png,image/webp,image/gif" multiple><div class="picks" hidden></div>`;
 }
 
-/** Thumbnails are the full file sized by CSS; a tap opens it at full size. */
-function shots(files: FileRow[], side: FileSide, token: string): string {
-  const own = files.filter((file) => file.side === side);
+/**
+ * Thumbnails are the full file sized by CSS; a tap opens it at full size. The
+ * agent's shots come first and your photos after, so an answered card keeps
+ * both in one strip. Two or more get a count, because the strip hides its scrollbar.
+ */
+function shots(files: FileRow[], token: string): string {
+  const own = [...files.filter((file) => file.side === 'card'), ...files.filter((file) => file.side === 'feedback')];
   if (own.length === 0) return '';
   const images = own.map((file) => `<a href="/files/${file.id}${token}"><img src="/files/${file.id}${token}" alt="${escapeHtml(file.name)}" loading="lazy"></a>`).join('');
-  return `<div class="shots">${images}</div>`;
+  return `<div class="shots${own.length > 1 ? ' multi' : ''}">${images}</div>${own.length > 1 ? `<p class="shots-count">${own.length} images</p>` : ''}`;
 }
 
 /** The source the Found something else form files under; it is what tells your cards from an agent's. */
@@ -344,6 +348,8 @@ export function newCardsLine(delta: number): string | undefined {
   return `${delta} new card${delta === 1 ? '' : 's'}, reload`;
 }
 
+const LIGHTBOX = '<dialog class="lightbox" aria-label="Images"><div class="lb-row"></div><button class="lb-close" type="button" aria-label="Close">Close</button><button class="lb-prev" type="button" aria-label="Previous image">\u2039</button><button class="lb-next" type="button" aria-label="Next image">\u203A</button><p class="lb-label" role="status"></p></dialog>';
+
 function pollScript(project: string, token: string, initialOpen: number, baseTitle: string): string {
   return `<script>(()=>{const f=document.querySelector('.jump');if(!f)return;const g=f.querySelector('.go');g.hidden=true;f.querySelector('select').addEventListener('change',()=>f.submit())})();let initial=${initialOpen};const baseTitle=${scriptString(baseTitle)};const setTitle=(n)=>{document.title=n>0?'('+n+') '+baseTitle:baseTitle};setInterval(async()=>{try{const r=await fetch('/api/counts?project=${project}${token}');if(!r.ok)return;const n=await r.json();setTitle(n.open);const line=document.getElementById('new-count');const delta=n.open-initial;if(delta>0){line.querySelector('a').textContent=delta===1?'1 new card, reload':delta+' new cards, reload';line.hidden=false}else{line.hidden=true}}catch{}} ,30000);${SAVE_SCRIPT(project)}</script>`;
 }
@@ -354,6 +360,21 @@ function pollScript(project: string, token: string, initialOpen: number, baseTit
  * baseline to the server count, so only cards added after that save appear.
  */
 const SAVE_SCRIPT = (project: string) => `
+const lb=document.querySelector('dialog.lightbox');
+if(lb){const row=lb.querySelector('.lb-row'),label=lb.querySelector('.lb-label'),prev=lb.querySelector('.lb-prev'),next=lb.querySelector('.lb-next');
+const count=()=>row.children.length;
+const index=()=>row.clientWidth?Math.round(row.scrollLeft/row.clientWidth):0;
+const close=lb.querySelector('.lb-close');
+const sync=()=>{const i=index(),n=count(),was=document.activeElement;label.textContent=(i+1)+' of '+n;prev.hidden=i<=0;next.hidden=i>=n-1;if((was===prev&&prev.hidden)||(was===next&&next.hidden)){const other=was===prev?next:prev;(other.hidden?close:other).focus()}};
+const go=(i)=>{const n=Math.max(0,Math.min(count()-1,i));row.scrollTo({left:n*row.clientWidth,behavior:matchMedia('(prefers-reduced-motion:no-preference)').matches?'smooth':'auto'})};
+row.addEventListener('scroll',sync);
+prev.addEventListener('click',()=>go(index()-1));
+next.addEventListener('click',()=>go(index()+1));
+close.addEventListener('click',()=>lb.close());
+lb.addEventListener('click',(event)=>{const t=event.target;if(t===lb||(t instanceof Element&&t.classList.contains('lb-slide')))lb.close()});
+lb.addEventListener('keydown',(event)=>{if(event.key==='ArrowLeft'){event.preventDefault();go(index()-1)}else if(event.key==='ArrowRight'){event.preventDefault();go(index()+1)}});
+lb.addEventListener('close',()=>row.replaceChildren());
+document.addEventListener('click',(event)=>{const target=event.target;const link=target instanceof Element?target.closest('.shots a'):null;if(!link||event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;const links=[...link.closest('.shots').querySelectorAll('a')];event.preventDefault();row.replaceChildren();for(const a of links){const slide=document.createElement('div');slide.className='lb-slide';const image=document.createElement('img');image.src=a.getAttribute('href');const thumb=a.querySelector('img');image.alt=thumb?thumb.alt:'';slide.append(image);row.append(slide)}lb.showModal();row.scrollTo({left:links.indexOf(link)*row.clientWidth,behavior:'instant'});sync()})}
 const toastEl=document.getElementById('toast');let toastTimer;
 const say=(text)=>{clearTimeout(toastTimer);toastEl.textContent=text;toastEl.classList.add('show');toastTimer=setTimeout(()=>toastEl.classList.remove('show'),2500)};
 const maxFiles=${MAX_FILES};const maxBytes=${MAX_FILE_BYTES};
@@ -453,6 +474,7 @@ min-height:44px;padding:.3rem .15rem;border-radius:8px;color:var(--ink);text-dec
 font-weight:500;text-align:center;overflow-wrap:break-word;hyphens:auto}
 .tile .t::before{content:"";display:block;width:7px;height:7px;margin:0 auto 2px;border-radius:50%;background:var(--bl)}
 .tiles:has(.tile:nth-child(5)) .tile{font-size:12px}
+@media(max-width:22.5rem){.tile{font-size:12px}}
 .tile.all .t::before{display:none}
 .tile .n{font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
 .tile.selected{background:var(--raised);box-shadow:var(--lift)}
@@ -531,9 +553,24 @@ font-size:16px;white-space:pre-wrap;overflow-wrap:anywhere}
 scroll-padding:0 1rem;scrollbar-width:none}
 .shots::-webkit-scrollbar{display:none}
 .shots::after{content:"";flex:0 0 .5rem}
-.shots a{flex:none;display:block;scroll-snap-align:start;border-radius:10px;overflow:hidden;line-height:0;
+.shots a{flex:none;display:block;max-width:100%;scroll-snap-align:start;border-radius:10px;overflow:hidden;line-height:0;
 box-shadow:inset 0 0 0 1px var(--sep)}
-.shots img{display:block;height:9rem;width:auto;max-width:none;background:var(--fill)}
+.shots img{display:block;height:auto;max-height:9rem;width:auto;max-width:100%;background:var(--fill)}
+.shots.multi a{max-width:calc(100% - 3rem)}
+.shots.multi img{height:9rem;max-height:none;width:100%;max-width:none;object-fit:cover;object-position:left top}
+.shots-count{margin:.35rem 1rem 0;font-size:13px;color:var(--ink-soft)}
+.lightbox{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:rgba(0,0,0,.92);color:#fff}
+.lb-row{position:absolute;inset:0;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
+.lb-row::-webkit-scrollbar{display:none}
+.lb-slide{flex:0 0 100%;display:flex;align-items:center;justify-content:center;scroll-snap-align:start;scroll-snap-stop:always;padding:3.5rem .5rem}
+.lb-slide img{display:block;max-width:100%;max-height:100%;object-fit:contain}
+.lb-close,.lb-prev,.lb-next{position:absolute;width:auto;min-width:44px;min-height:44px;margin:0;padding:0 .9rem;border:0;border-radius:22px;background:rgba(255,255,255,.16);color:#fff;font-size:15px}
+.lb-close{top:.5rem;right:.5rem}
+.lb-prev,.lb-next{top:50%;margin-top:-22px;font-size:26px;line-height:1}
+.lb-prev{left:.5rem}
+.lb-next{right:.5rem}
+.lb-prev[hidden],.lb-next[hidden]{display:none}
+.lb-label{position:absolute;left:0;right:0;bottom:.9rem;margin:0;text-align:center;font-size:15px;font-variant-numeric:tabular-nums;pointer-events:none}
 .reply{margin:1rem 0 0;padding:1rem;box-shadow:inset 0 1px 0 var(--sep)}
 .answer{margin:1rem 0 0;box-shadow:inset 0 1px 0 var(--sep)}
 .answer>.reply{margin:0;padding-top:.25rem;box-shadow:none}
