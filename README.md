@@ -116,13 +116,15 @@ Use `lookover skill install --to claude` for `~/.claude/skills/lookover`, or `lo
 
 ## Uploads
 
-Attach images to a card with `lookover add --image shot.png`. Repeat the flag for more, up to 5. The card shows them as a strip of thumbnails after its body, and a tap opens the full file. The tester attaches photos to a verdict, or to a card they file themselves, with the Add photo picker on the page. On a phone the picker offers the camera.
+Attach images to a card with `lookover add --image shot.png`. Repeat the flag for more, up to 5. The card shows them as a strip of thumbnails after its body, and a tap opens them in a lightbox you can swipe through. With JavaScript off, a tap opens the full file. The tester attaches photos to a verdict, or to a card they file themselves, with the Add photo picker on the page. On a phone the picker offers the camera.
 
 Lookover accepts PNG, JPEG, WebP, and GIF, and checks the file's first bytes rather than its name or declared type. Each file can be up to 10 MB and each request can carry 5 files. Go over either limit, or send another type, and the whole request is refused and nothing is stored. HEIC is refused with a hint to pick JPEG in the camera settings or share the photo as JPEG.
 
 JPEG uploads lose their Exif and APP13 (IPTC) segments, which is where GPS position and camera details live. The one thing kept is the orientation tag, so a portrait phone photo still opens upright. Nothing is re-encoded. Other formats are stored as sent. Thumbnails are the full file sized by CSS, so a large phone photo still downloads at full size.
 
 Files live under `files/<project>/<card>/` in the store, and `list`, `open`, and `feedback` include each card's files in `--json` with an absolute path, so an agent can open the tester's photo.
+
+Images add up. `lookover prune --all` lists the images on cards processed more than 30 days ago, and `lookover prune --all --yes` removes them. Pass `--older-than 14d` to change the cutoff, or `--project <slug>` to prune one project. A pruned card keeps its text and says how many images were removed. Cards that a newer card retests keep their images. The page shows a quiet line when anything is old enough to prune.
 
 ## License
 
