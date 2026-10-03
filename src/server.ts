@@ -250,6 +250,9 @@ function saved(store: Store, options: ServerOptions, request: IncomingMessage, r
   });
 }
 
+/** The page nudge and `lookover prune` agree on this default. */
+const PRUNE_DAYS = 30;
+
 function sendPage(response: ServerResponse, store: Store, current: string, token: string | undefined): void {
   const projects = store.listProjects();
   const project = current === 'all' ? undefined : projects.find((entry) => entry.slug === current);
@@ -261,7 +264,7 @@ function sendPage(response: ServerResponse, store: Store, current: string, token
   const done = store.listItems({ ...options, status: 'processed', order: 'newest', limit: 50 });
   const retestVerdicts = retestVerdictsFor(store, [...open, ...waiting, ...done]);
   const files = store.listFilesFor([...open, ...waiting].map((item) => item.id));
-  send(response, 200, 'text/html; charset=utf-8', renderPage({ projects, byActivity: store.listProjectsByActivity(), current, open, waiting, done, counts, retestVerdicts, files, token }));
+  send(response, 200, 'text/html; charset=utf-8', renderPage({ projects, byActivity: store.listProjectsByActivity(), current, open, waiting, done, counts, retestVerdicts, files, prunableBytes: store.prunableBytes(PRUNE_DAYS), token }));
 }
 
 function retestVerdictsFor(store: Store, items: Item[]): Map<number, string | null> {

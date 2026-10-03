@@ -17,6 +17,8 @@ export interface PageView {
   counts: Map<number, Counts>;
   retestVerdicts?: Map<number, string | null>;
   files?: Map<number, FileRow[]>;
+  /** Bytes `lookover prune` would free, across every project. */
+  prunableBytes?: number;
   token?: string;
 }
 
@@ -53,8 +55,19 @@ export function renderPage(view: PageView): string {
 ${newSection}
 <section><h2 data-section="open">Awaiting your test<span class="n">${view.open.length}</span></h2>${view.open.length === 0 ? `<p class="empty">${doneMark()}Nothing to test. A real and good state.</p>` : grouped(view, view.open).map((item) => renderCard(view, item, false)).join('')}</section>
 <section><h2 data-section="feedback">Waiting for the agent<span class="n">${view.waiting.length}</span></h2>${view.waiting.length === 0 ? '<p class="none">Nothing saved yet.</p>' : grouped(view, view.waiting).map((item) => renderCard(view, item, true)).join('')}</section>
-<section><h2>Processed<span class="n">${view.done.length}</span></h2>${view.done.length === 0 ? '<p class="none">Nothing processed yet.</p>' : `<details class="fold history"><summary>Show history${CHEVRON}</summary>${grouped(view, view.done).map((item) => `<div class="done" id="item-${item.id}"><strong>${escapeHtml(item.title)}</strong> <span class="badge ${escapeHtml(item.verdict ?? 'note')}">${escapeHtml(itemLabel(item))}</span><div class="meta">${escapeHtml(item.processed_at ?? '')}${item.processed_note ? ` · ${escapeHtml(item.processed_note)}` : ''}</div></div>`).join('')}</details>`}</section>
+<section><h2>Processed<span class="n">${view.done.length}</span></h2>${view.done.length === 0 ? '<p class="none">Nothing processed yet.</p>' : `<details class="fold history"><summary>Show history${CHEVRON}</summary>${grouped(view, view.done).map((item) => `<div class="done" id="item-${item.id}"><strong>${escapeHtml(item.title)}</strong> <span class="badge ${escapeHtml(item.verdict ?? 'note')}">${escapeHtml(itemLabel(item))}</span><div class="meta">${escapeHtml(item.processed_at ?? '')}${item.processed_note ? ` · ${escapeHtml(item.processed_note)}` : ''}${prunedNote(item)}</div></div>`).join('')}</details>`}</section>${pruneHint(view.prunableBytes ?? 0)}
 </main><div id="toast" class="toast" role="status"></div>${LIGHTBOX}${pollScript(projectQuery, pollToken, view.open.length, baseTitleText)}</body></html>`;
+}
+
+function prunedNote(item: Item): string {
+  if (item.pruned_images === null || item.pruned_images <= 0) return '';
+  const date = (item.pruned_at ?? '').slice(0, 10);
+  return ` · ${item.pruned_images} ${item.pruned_images === 1 ? 'image' : 'images'} removed ${escapeHtml(date)}`;
+}
+
+function pruneHint(bytes: number): string {
+  if (bytes <= 0) return '';
+  return `<p class="prune-hint">${(bytes / 1024 / 1024).toFixed(1)} MB of images on cards processed 30+ days ago. Run <code>lookover prune --all</code>.</p>`;
 }
 
 function tokenQuery(view: CardView): string {
@@ -621,6 +634,8 @@ background:var(--cell);border-radius:12px;color:var(--ink-soft);font-size:15px;t
 /* A section with nothing in it is a line, not a panel. Only the pinned
    "Nothing to test" line earns a panel: it is the one that is good news. */
 .none{margin:0;padding:.1rem 0;color:var(--ink-soft);font-size:15px}
+.prune-hint{margin:1.25rem 0 0;color:var(--ink-soft);font-size:13px}
+.prune-hint code{font-family:var(--mono);font-size:.92em}
 .empty code{font-family:var(--mono);font-size:.88em}
 .toast{position:fixed;left:50%;top:calc(.75rem + env(safe-area-inset-top));z-index:10;transform:translateX(-50%);
 max-width:min(26rem,calc(100vw - 2rem));padding:.7rem 1.1rem;border-radius:12px;background:var(--ink);color:var(--cell);
