@@ -1,6 +1,6 @@
 ---
 name: lookover
-description: Use when a change landed and a human should try it, at session start to sweep feedback, or when a needs-work card came back.
+description: Use when a change needs a human to check what the agent cannot test itself (rendered UI, behaviour on the seams, another machine), at session start to sweep feedback, or when a needs-work card came back.
 ---
 
 # Lookover
@@ -8,7 +8,13 @@ description: Use when a change landed and a human should try it, at session star
 Lookover is the manual-testing queue for one agent crew and one human tester.
 It is not a tracker. Keep the human's side to exact steps, one verdict, and a paragraph.
 
-## When a change lands
+## Before you file
+
+The human is not your tester. Smoke-test everything you can reach yourself first, and put the result in your report: run the CLI, read the output, use a scratch store, force the failure path.
+
+File a card only for what you cannot easily test: UI you cannot see rendered (real terminal colors, a browser page, a phone), behaviour on the seams (a hand-off between tools, real human input), and anything that needs another machine. When a change is partly both, smoke what you can and file a card for the rest only.
+
+## Filing a card
 
 File a card with the CLI. Include a short title, exact steps, the expected result, the URL to open, and the work ref.
 
