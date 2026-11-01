@@ -69,7 +69,7 @@ lookover process 1 --note "todo-123: fixed the mobile header spacing"
 
 ## How the loop works
 
-1. The agent files a card when a change lands, with exact steps, the expected result, the URL to open, and a ref for the work.
+1. The agent smoke-tests what it can reach, then files a card for what only a human can check, with exact steps, the expected result, the URL to open, and a ref for the work.
 2. You test the card on the page and answer with a verdict and a paragraph.
 3. The agent sweeps `lookover feedback --json`, acts on the answer, and processes the card with a note naming the work item.
 
@@ -104,7 +104,7 @@ The server binds to loopback unless you choose another host. `--host 0.0.0.0` ex
 
 ## For agents
 
-The package ships a skill at `skills/lookover/SKILL.md`. It gives an agent the same loop: file a card when a change lands, sweep `lookover feedback --json` at session start, then process the answer with a note naming the work item. Hive can carry the open count in a board pad line, but Hive is not required.
+The package ships a skill at `skills/lookover/SKILL.md`. It gives an agent the same loop: smoke-test first and file a card only for what the agent cannot test itself, sweep `lookover feedback --json` at session start, then process the answer with a note naming the work item. Hive can carry the open count in a board pad line, but Hive is not required.
 
 Install the agent skill into the directory used by Codex and Claude Code:
 
